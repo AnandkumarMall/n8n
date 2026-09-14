@@ -55,7 +55,6 @@ import { hasExpressionMapping, isValueExpression } from '@/app/utils/nodeTypesUt
 import { useParameterInputContribution } from '@/features/ndv/parameters/composables/useParameterInputContribution';
 
 import {
-	AI_TRANSFORM_NODE_TYPE,
 	APP_MODALS_ELEMENT_ID,
 	CORE_NODES_CATEGORY,
 	CUSTOM_API_CALL_KEY,
@@ -78,7 +77,6 @@ import { htmlEditorEventBus } from '@/app/event-bus';
 import { useCredentialsStore } from '@/features/credentials/credentials.store';
 import { injectNDVStoreIfProvided } from '@/features/ndv/shared/ndv.store';
 import { useNodeTypesStore } from '@/app/stores/nodeTypes.store';
-import { useSettingsStore } from '@n8n/stores/settings.store';
 import { useWorkflowsListStore } from '@/app/stores/workflowsList.store';
 import { useUIStore } from '@/app/stores/ui.store';
 import type { EventBus } from '@n8n/utils/event-bus';
@@ -185,7 +183,6 @@ const credentialsStore = useCredentialsStore();
 const ndvStore = injectNDVStoreIfProvided();
 const workflowsListStore = useWorkflowsListStore();
 const workflowDocumentStore = injectWorkflowDocumentStore();
-const settingsStore = useSettingsStore();
 const aiGateway = useAiGateway();
 const nodeTypesStore = useNodeTypesStore();
 const uiStore = useUIStore();
@@ -813,8 +810,6 @@ const showDragnDropTip = computed(
 		(ndvStore.value?.isInputParentOfActiveNode ?? false) &&
 		!props.isForCredential,
 );
-
-const shouldCaptureForPosthog = computed(() => node.value?.type === AI_TRANSFORM_NODE_TYPE);
 
 const isMapperAvailable = computed(
 	() =>
@@ -1719,7 +1714,6 @@ onUpdated(async () => {
 							:model-value="modelValueString"
 							:is-read-only="isReadOnly"
 							:rows="editorRows"
-							:posthog-capture="shouldCaptureForPosthog"
 							fill-parent
 							@update:model-value="valueChangedDebounced"
 						/>
@@ -1755,7 +1749,6 @@ onUpdated(async () => {
 					:language="editorLanguage"
 					:is-read-only="isReadOnly || editorIsReadOnly"
 					:rows="editorRows"
-					:ai-button-enabled="settingsStore.isCloudDeployment"
 					@update:model-value="valueChangedDebounced"
 				>
 					<template #suffix>
@@ -1848,7 +1841,6 @@ onUpdated(async () => {
 					:model-value="modelValueString"
 					:is-read-only="isReadOnly || editorIsReadOnly"
 					:rows="editorRows"
-					:posthog-capture="shouldCaptureForPosthog"
 					@update:model-value="valueChangedDebounced"
 				>
 					<template #suffix>
