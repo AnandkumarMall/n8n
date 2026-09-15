@@ -75,6 +75,11 @@ export const REGULAR_PROJECT_ADMIN_SCOPES: Scope[] = [
 	'externalSecretsProvider:list',
 	'externalSecretsProvider:sync',
 	'externalSecret:list',
+	'projectAiPreference:list',
+	'projectAiPreference:read',
+	'projectAiPreference:create',
+	'projectAiPreference:update',
+	'projectAiPreference:delete',
 ];
 
 export const PERSONAL_PROJECT_OWNER_SCOPES: Scope[] = [
@@ -185,6 +190,11 @@ export const PROJECT_EDITOR_SCOPES: Scope[] = [
 	'externalSecretsProvider:read',
 	'externalSecretsProvider:list',
 	'externalSecret:list',
+	'projectAiPreference:list',
+	'projectAiPreference:read',
+	'projectAiPreference:create',
+	'projectAiPreference:update',
+	'projectAiPreference:delete',
 ];
 
 export const PROJECT_VIEWER_SCOPES: Scope[] = [
