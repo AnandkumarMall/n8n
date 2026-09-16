@@ -291,21 +291,27 @@ describe('pollPipelineUpdateEvents', () => {
 			expect(staticData).toEqual(freshState());
 		});
 
-		it('does not emit an event from before or at the activation time', async () => {
+		it('does not emit an event from before the activation time', async () => {
 			const { staticData, requestQuery, poll, pollWith } = createContext({ events: ALL_EVENTS });
 
 			await expect(poll()).resolves.toBeNull();
-			await expect(
-				pollWith([
-					progressEvent('RUNNING', toIso(NOW - 1000)),
-					progressEvent('RUNNING', toIso(NOW)),
-				]),
-			).resolves.toBeNull();
+			await expect(pollWith([progressEvent('RUNNING', toIso(NOW - 1000))])).resolves.toBeNull();
 
 			expect(requestQuery()).toMatchObject({
 				filter: `${LEVELS_FILTER} AND timestamp > '${toIso(NOW)}'`,
 			});
 			expect(staticData).toEqual(freshState());
+		});
+
+		it('keeps an event whose sub-millisecond timestamp falls right after the floor', async () => {
+			const justAfterNow = toIso(NOW).replace('Z', '4Z');
+			const { staticData, eventsWith, poll } = createContext({ events: ALL_EVENTS });
+
+			await expect(poll()).resolves.toBeNull();
+			await expect(eventsWith([progressEvent('RUNNING', justAfterNow)])).resolves.toEqual([
+				emitted('updateStarted'),
+			]);
+			expect(staticData).toEqual({ ...freshState(), updates: { [UPDATE_ID]: running(NOW) } });
 		});
 	});
 

@@ -308,7 +308,7 @@ export async function pollPipelineUpdateEvents(
 		PERMISSION_HINT,
 	);
 	const progress = toChronological(page.items).filter(
-		(update) => update.timestampMs > staticData.floorMs,
+		(update) => update.timestampMs >= staticData.floorMs,
 	);
 	const items = collectItems(staticData.updates, progress, options);
 
