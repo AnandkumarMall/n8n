@@ -443,16 +443,12 @@ describe('pollJobRunEvents', () => {
 			expect(staticData).toEqual(watchingState());
 		});
 
-		it('ignores a null entry in the listed runs', async () => {
+		it('rejects a page with a null entry in the listed runs and keeps the state', async () => {
 			const { staticData, api, poll } = createContext({ staticData: watchingState() });
 			api.mockResolvedValueOnce({ runs: [null, failedRun] });
 
-			await expect(poll()).resolves.toEqual([
-				[simplifiedItem('runFailed', { result: failedResult })],
-			]);
-			expect(staticData).toEqual(
-				watchingState({ [RUN_ID]: tracked(START_TIME, true) }, START_TIME),
-			);
+			await expect(poll()).rejects.toThrow('Databricks did not return a JSON list of job runs');
+			expect(staticData).toEqual(watchingState());
 		});
 	});
 
