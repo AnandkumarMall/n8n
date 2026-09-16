@@ -4,18 +4,13 @@ import type { IDataObject, INodeExecutionData, IPollFunctions } from 'n8n-workfl
 
 import { getActiveCredentialType, makePermissionErrorLegible } from '../actions/helpers';
 import type { DatabricksJobRun } from '../actions/interfaces';
-import {
-	DEFAULT_MAX_PAGES,
-	JOB_RUNS_MAX_PAGE_SIZE,
-	listAllJobRuns,
-	listJobRuns,
-} from '../transport';
+import { JOB_RUNS_MAX_PAGE_SIZE, listAllJobRuns, listJobRuns } from '../transport';
 
 export const OVERLAP_MS = 5 * 60 * 1000;
 
-type JobRunEvent = 'runFailed' | 'runStarted' | 'runSucceeded';
+const JOB_RUN_EVENTS = ['runFailed', 'runStarted', 'runSucceeded'] as const;
 
-const JOB_RUN_EVENTS: readonly JobRunEvent[] = ['runFailed', 'runStarted', 'runSucceeded'];
+type JobRunEvent = (typeof JOB_RUN_EVENTS)[number];
 
 const TERMINAL_STATUS_STATE = 'TERMINATED';
 
@@ -23,7 +18,9 @@ const TERMINAL_LEGACY_LIFECYCLE_STATES = new Set(['TERMINATED', 'SKIPPED', 'INTE
 
 type ListedRun = DatabricksJobRun & { run_id: number; start_time: number };
 
-type TrackedRun = { startMs: number; started: boolean; terminal: boolean };
+type JobParameter = NonNullable<DatabricksJobRun['job_parameters']>[number];
+
+type TrackedRun = { startMs: number; terminal: boolean };
 
 type JobRunWatchState = {
 	jobId: number;
@@ -32,24 +29,24 @@ type JobRunWatchState = {
 	runs: Record<string, TrackedRun>;
 };
 
-function isJobRunEvent(value: unknown): value is JobRunEvent {
-	return JOB_RUN_EVENTS.some((event) => event === value);
-}
-
 function isJobRunEventList(value: unknown): value is JobRunEvent[] {
-	return Array.isArray(value) && value.every(isJobRunEvent);
+	return (
+		Array.isArray(value) && value.every((item) => JOB_RUN_EVENTS.some((event) => event === item))
+	);
 }
 
-function isListedRun(run: DatabricksJobRun): run is ListedRun {
-	return typeof run.run_id === 'number' && typeof run.start_time === 'number' && run.start_time > 0;
+function isListedRun(run: unknown): run is ListedRun {
+	return (
+		isRecord(run) &&
+		typeof run.run_id === 'number' &&
+		typeof run.start_time === 'number' &&
+		run.start_time > 0
+	);
 }
 
 function isTrackedRun(value: unknown): value is TrackedRun {
 	return (
-		isRecord(value) &&
-		typeof value.startMs === 'number' &&
-		typeof value.started === 'boolean' &&
-		typeof value.terminal === 'boolean'
+		isRecord(value) && typeof value.startMs === 'number' && typeof value.terminal === 'boolean'
 	);
 }
 
@@ -124,7 +121,9 @@ function isTerminal(run: DatabricksJobRun): boolean {
 
 function getOutcomeCode(run: DatabricksJobRun): string | undefined {
 	const details = run.status?.termination_details;
-	return details?.code ?? details?.type ?? run.state?.result_state ?? getLifecycleState(run);
+	return details
+		? (details.code ?? details.type ?? 'UNKNOWN')
+		: (run.state?.result_state ?? getLifecycleState(run));
 }
 
 function terminalEventOf(run: DatabricksJobRun): JobRunEvent {
@@ -139,12 +138,12 @@ function toChronological(runs: DatabricksJobRun[]): ListedRun[] {
 		);
 }
 
+function toParameterEntries(parameter: JobParameter): Array<[string, string | undefined]> {
+	return parameter.name ? [[parameter.name, parameter.value ?? parameter.default]] : [];
+}
+
 function readJobParameters(run: DatabricksJobRun): Record<string, string | undefined> {
-	const parameters: Record<string, string | undefined> = {};
-	for (const parameter of run.job_parameters ?? []) {
-		if (parameter.name) parameters[parameter.name] = parameter.value ?? parameter.default;
-	}
-	return parameters;
+	return Object.fromEntries((run.job_parameters ?? []).flatMap(toParameterEntries));
 }
 
 function toIso(ms: number): string {
@@ -218,13 +217,12 @@ function collectManualItems(
 
 function collectNewEvents(state: JobRunWatchState, run: ListedRun): JobRunEvent[] {
 	const key = String(run.run_id);
-	const entry = state.runs[key] ?? { startMs: run.start_time, started: false, terminal: false };
-	state.runs[key] = entry;
 	const events: JobRunEvent[] = [];
-	if (!entry.started) {
-		entry.started = true;
+	if (state.runs[key] === undefined) {
 		events.push('runStarted');
+		state.runs[key] = { startMs: run.start_time, terminal: false };
 	}
+	const entry = state.runs[key];
 	if (!entry.terminal && isTerminal(run)) {
 		entry.terminal = true;
 		events.push(terminalEventOf(run));
@@ -237,7 +235,7 @@ function startWatching(staticData: IDataObject, jobId: number): void {
 	const now = Date.now();
 	staticData.jobId = jobId;
 	staticData.cursorMs = now;
-	staticData.floorMs = now - OVERLAP_MS;
+	staticData.floorMs = now;
 	staticData.runs = {};
 }
 
@@ -286,31 +284,28 @@ export async function pollJobRunEvents(
 		return null;
 	}
 
+	const deadlineEpochMs = Date.now() + this.getPollBudgetMs();
 	const startTimeFromMs = staticData.floorMs;
 	const page = await withLegibleErrors(
 		async () =>
-			await listAllJobRuns(this, credentialType, {
-				jobId,
-				startTimeFromMs,
-				pageSize: JOB_RUNS_MAX_PAGE_SIZE,
-			}),
+			await listAllJobRuns(
+				this,
+				credentialType,
+				{ jobId, startTimeFromMs, pageSize: JOB_RUNS_MAX_PAGE_SIZE },
+				{ deadlineEpochMs },
+			),
 	);
-	const runs = toChronological(page.items);
+	const runs = toChronological(page.items).filter((run) => run.start_time >= startTimeFromMs);
 	const items = runs.flatMap((run) =>
 		collectNewEvents(staticData, run)
 			.filter((event) => subscribed.includes(event))
 			.map((event) => toItem(event, run, simplify)),
 	);
 
-	if (page.nextPageToken === undefined) {
-		advanceCursor(staticData, new Set(runs.map((run) => String(run.run_id))));
-	} else {
-		if (runs.length > 0) {
-			staticData.cursorMs = runs[0].start_time;
-			raiseFloor(staticData);
-		}
+	advanceCursor(staticData, new Set(runs.map((run) => String(run.run_id))));
+	if (page.nextPageToken !== undefined) {
 		this.logger.warn(
-			`Databricks Trigger stopped after ${DEFAULT_MAX_PAGES} pages while listing runs of job ${jobId} since ${toIso(startTimeFromMs)}. It kept the newest ${runs.length} runs; older runs in that window may be missed.`,
+			`Databricks Trigger could not list every run of job ${jobId} since ${toIso(startTimeFromMs)} in one poll. It reported the ${runs.length} most recent runs and skipped older runs in that window.`,
 		);
 	}
 

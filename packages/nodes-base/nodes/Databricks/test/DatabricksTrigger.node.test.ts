@@ -95,10 +95,11 @@ describe('DatabricksTrigger', () => {
 		});
 	});
 
-	it('should pick the job with the same locator modes as the action node', () => {
+	it('should pick the job with the locator modes of the action node', () => {
 		const jobId = property(trigger, 'jobId');
 
 		expect(jobId).toMatchObject({
+			displayName: 'Job',
 			type: 'resourceLocator',
 			required: true,
 			default: { mode: 'list', value: '' },
@@ -106,11 +107,7 @@ describe('DatabricksTrigger', () => {
 			displayOptions: { show: { resource: ['job'] } },
 		});
 		expect(jobId?.modes?.map((mode) => mode.name)).toEqual(['list', 'id', 'url']);
-		expect(jobId?.modes?.[0].typeOptions).toEqual({
-			searchListMethod: 'getJobs',
-			searchable: true,
-		});
-		expect(jobId?.modes).toEqual(property(action, 'jobId')?.modes);
+		expect(jobId?.modes).toBe(property(action, 'jobId')?.modes);
 		expect(trigger.methods?.listSearch?.getJobs).toBe(getJobs);
 	});
 
@@ -134,7 +131,7 @@ describe('DatabricksTrigger', () => {
 		});
 	});
 
-	it('should start watching the job on the first poll', async () => {
+	it('should hand the poll to the job run watcher', async () => {
 		const context = mockDeep<IPollFunctions>();
 		const staticData = {};
 		context.getMode.mockReturnValue('trigger');
@@ -145,12 +142,7 @@ describe('DatabricksTrigger', () => {
 
 		await expect(trigger.poll.call(context)).resolves.toBeNull();
 
-		expect(staticData).toEqual({
-			jobId: 281874479417551,
-			cursorMs: expect.any(Number),
-			floorMs: expect.any(Number),
-			runs: {},
-		});
+		expect(staticData).toMatchObject({ jobId: 281874479417551 });
 		expect(context.helpers.httpRequestWithAuthentication).not.toHaveBeenCalled();
 	});
 });

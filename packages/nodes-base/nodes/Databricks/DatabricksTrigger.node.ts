@@ -1,6 +1,8 @@
 import {
 	NodeConnectionTypes,
+	UnexpectedError,
 	type INodeExecutionData,
+	type INodeProperties,
 	type INodeType,
 	type INodeTypeDescription,
 	type IPollFunctions,
@@ -9,9 +11,18 @@ import {
 import { authenticationProperty, databricksCredentials } from './authentication';
 import { DATABRICKS_TRIGGER_NODE_VERSION } from './constants';
 import { getJobs } from './methods/listSearch';
+import { jobParameters } from './resources';
 import { pollJobRunEvents } from './trigger/jobRunEvents';
 
 const showForJob = { resource: ['job'] };
+
+function findJobPicker(): INodeProperties {
+	const picker = jobParameters.find((property) => property.name === 'jobId');
+	if (picker === undefined) {
+		throw new UnexpectedError('The Databricks job parameters do not include the jobId picker');
+	}
+	return picker;
+}
 
 export class DatabricksTrigger implements INodeType {
 	description: INodeTypeDescription = {
@@ -53,51 +64,11 @@ export class DatabricksTrigger implements INodeType {
 				default: 'job',
 			},
 			{
-				displayName: 'Job',
-				name: 'jobId',
-				type: 'resourceLocator',
-				default: { mode: 'list', value: '' },
-				required: true,
+				...findJobPicker(),
 				description: 'The job whose runs start the workflow',
 				displayOptions: {
 					show: showForJob,
 				},
-				modes: [
-					{
-						displayName: 'From List',
-						name: 'list',
-						type: 'list',
-						typeOptions: {
-							searchListMethod: 'getJobs',
-							searchable: true,
-						},
-					},
-					{
-						displayName: 'By ID',
-						name: 'id',
-						type: 'string',
-						placeholder: 'e.g. 281874479417551',
-						validation: [
-							{
-								type: 'regex',
-								properties: {
-									regex: '^[0-9]+$',
-									errorMessage: 'Must be a numeric job ID',
-								},
-							},
-						],
-					},
-					{
-						displayName: 'By URL',
-						name: 'url',
-						type: 'string',
-						placeholder: 'e.g. https://adb-xxx.azuredatabricks.net/jobs/281874479417551',
-						extractValue: {
-							type: 'regex',
-							regex: 'https://[^/]+/(?:jobs|\\?o=[0-9]+#job|#job)/([0-9]+)',
-						},
-					},
-				],
 			},
 			{
 				displayName: 'Events',
@@ -111,7 +82,8 @@ export class DatabricksTrigger implements INodeType {
 					{
 						name: 'Run Failed',
 						value: 'runFailed',
-						description: 'A run ended without success, including cancelled and skipped runs',
+						description:
+							'A run ended with any result other than a full success, including cancelled, skipped and partly failed runs. A repair of a run that was already reported does not fire again.',
 					},
 					{
 						name: 'Run Started',
@@ -121,7 +93,8 @@ export class DatabricksTrigger implements INodeType {
 					{
 						name: 'Run Succeeded',
 						value: 'runSucceeded',
-						description: 'A run ended with success',
+						description:
+							'A run ended with every task successful. A repair of a run that was already reported does not fire again.',
 					},
 				],
 				default: ['runFailed', 'runSucceeded'],
