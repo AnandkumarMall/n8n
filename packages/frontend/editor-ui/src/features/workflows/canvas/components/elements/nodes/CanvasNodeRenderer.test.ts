@@ -4,7 +4,9 @@ import {
 	createCanvasNodeProvide,
 	createCanvasProvide,
 } from '@/features/workflows/canvas/__tests__/utils';
+import { useTypeAvailabilityPoliciesStore } from '@n8n/frontend-module-type-availability-policies';
 import { createTestingPinia } from '@pinia/testing';
+import { mockedStore } from '@/__tests__/utils';
 import { setActivePinia } from 'pinia';
 import { CanvasNodeRenderType } from '../../../canvas.types';
 
@@ -21,6 +23,9 @@ const renderComponent = createComponentRenderer(CanvasNodeRenderer);
 beforeEach(() => {
 	const pinia = createTestingPinia();
 	setActivePinia(pinia);
+	mockedStore(useTypeAvailabilityPoliciesStore).getNodeTypeAvailability.mockImplementation(
+		(name) => ({ name, available: true }),
+	);
 });
 
 describe('CanvasNodeRenderer', () => {

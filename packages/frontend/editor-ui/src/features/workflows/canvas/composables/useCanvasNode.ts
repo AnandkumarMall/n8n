@@ -35,6 +35,7 @@ export function useCanvasNode() {
 
 	const subtitle = computed(() => data.value.subtitle);
 	const name = computed(() => data.value.name);
+	const type = computed(() => data.value.type);
 	const connections = computed(() => data.value.connections);
 
 	const isDisabled = computed(() => data.value.disabled);
@@ -70,6 +71,7 @@ export function useCanvasNode() {
 		node,
 		id,
 		name,
+		type,
 		label,
 		subtitle,
 		connections,

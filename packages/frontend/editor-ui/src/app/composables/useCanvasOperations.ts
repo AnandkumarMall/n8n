@@ -67,6 +67,7 @@ import { useHistoryStore } from '@/app/stores/history.store';
 import { useNDVStore } from '@/features/ndv/shared/ndv.store';
 import { useNodeCreatorStore } from '@/features/shared/nodeCreator/nodeCreator.store';
 import { useNodeTypesStore } from '@/app/stores/nodeTypes.store';
+import { useTypeAvailabilityPoliciesStore } from '@n8n/frontend-module-type-availability-policies';
 import { useRootStore } from '@n8n/stores/useRootStore';
 import { useSettingsStore } from '@n8n/stores/settings.store';
 import { useTagsStore } from '@/features/shared/tags/tags.store';
@@ -240,6 +241,7 @@ export function useCanvasOperations() {
 	const historyStore = useHistoryStore();
 	const uiStore = useUIStore();
 	const nodeTypesStore = useNodeTypesStore();
+	const typeAvailabilityPoliciesStore = useTypeAvailabilityPoliciesStore();
 	const canvasStore = useCanvasStore();
 	const agentNodeCanvasGeometryStore = useAgentNodeCanvasGeometryStore();
 	const settingsStore = useSettingsStore();
@@ -3492,8 +3494,18 @@ export function useCanvasOperations() {
 		return result.nodes?.map((node) => node.id).filter(isPresent) ?? [];
 	}
 
-	async function copyNodes(ids: string[]) {
-		const workflowData = deepCopy(getNodesToSave(workflowDocumentStore.value.getNodesByIds(ids)));
+	/**
+	 * Copies the nodes to the clipboard. Returns false, and copies nothing, when the selection
+	 * holds a node whose type a type availability policy blocks: a copy is one more way to
+	 * spread that type, next to duplicate and paste.
+	 */
+	async function copyNodes(ids: string[]): Promise<boolean> {
+		const nodes = workflowDocumentStore.value.getNodesByIds(ids);
+		if (nodes.some((node) => !typeAvailabilityPoliciesStore.isNodeTypeAvailable(node.type))) {
+			return false;
+		}
+
+		const workflowData = deepCopy(getNodesToSave(nodes));
 
 		workflowData.meta = {
 			...workflowData.meta,
@@ -3507,11 +3519,14 @@ export function useCanvasOperations() {
 			node_types: workflowData.nodes.map((node) => node.type),
 			workflow_id: workflowDocumentStore.value.workflowId,
 		});
+
+		return true;
 	}
 
 	async function cutNodes(ids: string[]) {
-		await copyNodes(ids);
-		deleteNodes(ids);
+		if (await copyNodes(ids)) {
+			deleteNodes(ids);
+		}
 	}
 
 	async function openExecution(executionId: string, nodeId?: string) {

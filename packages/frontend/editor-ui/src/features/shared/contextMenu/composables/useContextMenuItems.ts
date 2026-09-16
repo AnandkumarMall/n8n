@@ -22,6 +22,7 @@ import { useEditorContext } from '@/app/composables/useEditorContext';
 import { usePinnedData } from '@/app/composables/usePinnedData';
 import { useSelectionValidation } from '@/app/composables/useSelectionValidation';
 import { injectWorkflowDocumentStore } from '@/app/stores/workflowDocument.store';
+import { useTypeAvailabilityPoliciesStore } from '@n8n/frontend-module-type-availability-policies';
 import { injectContextMenuGroupView } from './contextMenuGroupView';
 
 export type ContextMenuAction =
@@ -93,6 +94,7 @@ export function useContextMenuItems(
 	const sourceControlStore = useSourceControlStore();
 	const collaborationStore = useCollaborationStore();
 	const focusedNodesStore = useFocusedNodesStore();
+	const typeAvailabilityPoliciesStore = useTypeAvailabilityPoliciesStore();
 	const posthog = usePostHog();
 	const { resolveGroupableNodeIds } = useSelectionValidation();
 	const groupView = injectContextMenuGroupView();
@@ -144,7 +146,14 @@ export function useContextMenuItems(
 		return nodeType.maxNodes === undefined || sameTypeNodes.length < nodeType.maxNodes;
 	};
 
+	// A type blocked by a type availability policy: the node stays on the canvas so the
+	// builder can replace it, but nothing may run it, pin it, copy it or make more of it.
+	const isRestricted = (node: INode): boolean =>
+		!typeAvailabilityPoliciesStore.isNodeTypeAvailable(node.type);
+
 	const canDuplicateNode = (node: INode): boolean => {
+		if (isRestricted(node)) return false;
+
 		const nodeType = nodeTypesStore.getNodeType(node.type, node.typeVersion);
 		if (!nodeType) return false;
 		if (NOT_DUPLICATABLE_NODE_TYPES.includes(nodeType.name)) return false;
@@ -478,12 +487,16 @@ export function useContextMenuItems(
 						? i18n.baseText('contextMenu.unpin', i18nOptions)
 						: i18n.baseText('contextMenu.pin', i18nOptions),
 					shortcut: { keys: ['p'] },
-					disabled: isReadOnly.value || !nodes.every((n) => usePinnedData(n).canPinNode(true)),
+					disabled:
+						isReadOnly.value ||
+						nodes.some(isRestricted) ||
+						!nodes.every((n) => usePinnedData(n).canPinNode(true)),
 				},
 				{
 					id: 'copy',
 					label: i18n.baseText('contextMenu.copy', i18nOptions),
 					shortcut: { metaKey: true, keys: ['C'] },
+					disabled: nodes.some(isRestricted),
 				},
 				{
 					id: 'duplicate',
@@ -559,7 +572,7 @@ export function useContextMenuItems(
 							{
 								id: 'execute',
 								label: i18n.baseText('contextMenu.test'),
-								disabled: isReadOnly.value || !isExecutable(nodes[0]),
+								disabled: isReadOnly.value || isRestricted(nodes[0]) || !isExecutable(nodes[0]),
 							},
 							...copyWebhookActions,
 							{

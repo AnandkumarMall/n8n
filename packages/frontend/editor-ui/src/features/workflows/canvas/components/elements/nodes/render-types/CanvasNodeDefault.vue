@@ -10,6 +10,7 @@ import { useZoomAdjustedValues } from '../../../../composables/useZoomAdjustedVa
 import CanvasNodeSettingsIcons from './parts/CanvasNodeSettingsIcons.vue';
 import { useNodePrivateCredential } from '@/features/resolvers/composables/useNodePrivateCredential';
 import { useNodeHelpers } from '@/app/composables/useNodeHelpers';
+import { useNodeTypeRestriction } from '@/app/composables/useNodeTypeRestriction';
 import { calculateNodeSize } from '@/app/utils/nodeViewUtils';
 import ExperimentalInPlaceNodeSettings from '../../../../experimental/components/ExperimentalEmbeddedNodeDetails.vue';
 import CanvasNodeTooltip from './parts/CanvasNodeTooltip.vue';
@@ -35,6 +36,7 @@ const route = useRoute();
 const {
 	id,
 	name,
+	type,
 	label,
 	subtitle,
 	connections,
@@ -51,6 +53,7 @@ const {
 } = useCanvasNode();
 const { hasPrivateCredential, tooltipText: privateCredentialTooltip } =
 	useNodePrivateCredential(name);
+const { isRestricted } = useNodeTypeRestriction(type);
 const renderData = injectCanvasRenderData();
 const inputs = computed(() => renderData.value.nodeInputsByNodeId.get(id.value)?.value ?? []);
 const outputs = computed(() => renderData.value.nodeOutputsByNodeId.get(id.value)?.value ?? []);
@@ -85,8 +88,12 @@ const classes = computed(() => {
 	return {
 		[$style.node]: true,
 		[$style.selected]: isSelected.value,
+		// A restricted node borrows the deactivated look (grey border, greyed icon); the red lock in
+		// the status corner is what tells the two apart.
 		[$style.disabled]:
-			isDisabled.value || (isNotInstalledCommunityNode.value && !isDemoRoute.value),
+			isDisabled.value ||
+			isRestricted.value ||
+			(isNotInstalledCommunityNode.value && !isDemoRoute.value),
 		[$style.success]: Boolean(
 			hasRunData.value && executionStatus.value === 'success' && !hasExecutionPinData.value,
 		),
@@ -226,13 +233,14 @@ function onActivate(event: MouseEvent) {
 			:icon-source="iconSource"
 			:size="iconSize"
 			:shrink="false"
-			:disabled="isDisabled"
+			:disabled="isDisabled || isRestricted"
 			:class="$style.icon"
 		/>
 		<CanvasNodeSettingsIcons
 			v-if="
 				!renderOptions.configuration &&
 				!isDisabled &&
+				!isRestricted &&
 				!(hasSubstitutedOutput && !nodeHelpers.isProductionExecutionPreview.value)
 			"
 		/>
@@ -244,11 +252,14 @@ function onActivate(event: MouseEvent) {
 			<div v-if="isDisabled" :class="$style.disabledLabel">
 				({{ i18n.baseText('node.disabled') }})
 			</div>
-			<div v-if="subtitle && !isNotInstalledCommunityNode" :class="$style.subtitle">
+			<div v-if="isRestricted" :class="$style.subtitle" data-test-id="canvas-node-restricted">
+				{{ i18n.baseText('node.restricted') }}
+			</div>
+			<div v-else-if="subtitle && !isNotInstalledCommunityNode" :class="$style.subtitle">
 				{{ subtitle }}
 			</div>
 		</div>
-		<CanvasNodeStatusIcons v-if="!isDisabled" :class="$style.statusIcons" />
+		<CanvasNodeStatusIcons v-if="!isDisabled || isRestricted" :class="$style.statusIcons" />
 	</div>
 </template>
 

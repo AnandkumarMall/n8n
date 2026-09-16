@@ -2,6 +2,7 @@
 import { computed, useCssModule } from 'vue';
 import TitledList from '@/app/components/TitledList.vue';
 import { useNodeHelpers } from '@/app/composables/useNodeHelpers';
+import { useNodeTypeRestriction } from '@/app/composables/useNodeTypeRestriction';
 import { useCanvasNode } from '../../../../../composables/useCanvasNode';
 import { injectCanvasRenderData } from '@/features/workflows/canvas/canvas.utils';
 import { useI18n } from '@n8n/i18n';
@@ -28,6 +29,7 @@ const $style = useCssModule();
 const {
 	id,
 	name,
+	type,
 	validationErrors,
 	hasValidationErrors,
 	executionStatus,
@@ -37,6 +39,7 @@ const {
 	render,
 	isNotInstalledCommunityNode,
 } = useCanvasNode();
+const { isRestricted, title: restrictionTitle } = useNodeTypeRestriction(type);
 const renderData = injectCanvasRenderData();
 const executionErrors = computed(
 	() => renderData.value.executionIssuesByNodeId.get(id.value)?.value ?? [],
@@ -84,7 +87,17 @@ const groupedExecutionErrors = computed(() => {
 
 <template>
 	<div
-		v-if="isNotInstalledCommunityNode && !isDemoRoute"
+		v-if="isRestricted"
+		:class="[...commonClasses, $style.issues]"
+		data-test-id="node-restricted"
+	>
+		<N8nTooltip :show-after="500" placement="bottom">
+			<template #content>{{ restrictionTitle }}</template>
+			<N8nIcon icon="lock" :size="size" />
+		</N8nTooltip>
+	</div>
+	<div
+		v-else-if="isNotInstalledCommunityNode && !isDemoRoute"
 		:class="[...commonClasses, $style.issues]"
 		data-test-id="node-not-installed"
 	>
