@@ -17,8 +17,9 @@ type JobRunEvent = 'runFailed' | 'runStarted' | 'runSucceeded';
 
 const JOB_RUN_EVENTS: readonly JobRunEvent[] = ['runFailed', 'runStarted', 'runSucceeded'];
 
-// TERMINATED ends `status.state`; SKIPPED and INTERNAL_ERROR end the deprecated `state.life_cycle_state`
-const TERMINAL_RUN_STATES = new Set(['TERMINATED', 'SKIPPED', 'INTERNAL_ERROR']);
+const TERMINAL_STATUS_STATE = 'TERMINATED';
+
+const TERMINAL_LEGACY_LIFECYCLE_STATES = new Set(['TERMINATED', 'SKIPPED', 'INTERNAL_ERROR']);
 
 type ListedRun = DatabricksJobRun & { run_id: number; start_time: number };
 
@@ -115,8 +116,10 @@ function getLifecycleState(run: DatabricksJobRun): string | undefined {
 }
 
 function isTerminal(run: DatabricksJobRun): boolean {
-	const lifecycle = getLifecycleState(run);
-	return lifecycle !== undefined && TERMINAL_RUN_STATES.has(lifecycle);
+	const status = run.status?.state;
+	if (status !== undefined) return status === TERMINAL_STATUS_STATE;
+	const lifecycle = run.state?.life_cycle_state;
+	return lifecycle !== undefined && TERMINAL_LEGACY_LIFECYCLE_STATES.has(lifecycle);
 }
 
 function getOutcomeCode(run: DatabricksJobRun): string | undefined {
@@ -163,7 +166,7 @@ function simplifyResult(run: ListedRun): IDataObject {
 		state: getLifecycleState(run),
 		code: getOutcomeCode(run),
 		type: details?.type,
-		message: details?.message ?? run.state?.state_message,
+		message: details ? details.message : run.state?.state_message,
 	});
 }
 

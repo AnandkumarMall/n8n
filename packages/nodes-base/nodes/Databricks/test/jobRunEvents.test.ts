@@ -15,24 +15,45 @@ import { OVERLAP_MS, pollJobRunEvents } from '../trigger/jobRunEvents';
 const HOST = 'https://adb-example.cloud.databricks.com';
 const JOB_ID = 281874479417551;
 const RUN_ID = 41847992357943;
+const RUN_URL = `${HOST}/?o=1234567890#job/${JOB_ID}/run/${RUN_ID}`;
 const START_TIME = 1756733838171;
 const END_TIME = 1756733878640;
+const STARTED_AT = '2025-09-01T13:37:18.171Z';
+const ENDED_AT = '2025-09-01T13:37:58.640Z';
 const NOW = END_TIME + 10 * 60 * 1000;
 const CURSOR = START_TIME - 1000;
+const FAILURE_MESSAGE =
+	'Task main failed with message: Workload failed, see run output for details.';
+const ALL_EVENTS = ['runFailed', 'runStarted', 'runSucceeded'];
+
+const STATUS_IN_FLIGHT = ['BLOCKED', 'PENDING', 'QUEUED', 'RUNNING', 'TERMINATING', 'WAITING'];
+const LEGACY_IN_FLIGHT = [
+	'PENDING',
+	'RUNNING',
+	'TERMINATING',
+	'BLOCKED',
+	'WAITING_FOR_RETRY',
+	'QUEUED',
+];
 
 const node = mock<INode>({ name: 'Databricks Trigger', typeVersion: 1 });
 
-const jobParameters = (...parameters: NonNullable<DatabricksJobRun['job_parameters']>) =>
-	parameters;
+type RunOverrides = Partial<DatabricksJobRun>;
+type JobParameter = NonNullable<DatabricksJobRun['job_parameters']>[number];
 
-const failedRun: DatabricksJobRun = {
+const jobParameter = (name: string, values: Pick<JobParameter, 'value' | 'default'>) => ({
+	name,
+	...values,
+});
+
+const listedRun = (overrides: RunOverrides = {}): DatabricksJobRun => ({
 	job_id: JOB_ID,
 	run_id: RUN_ID,
 	run_name: 'n8n-spike-webhook-test',
-	run_page_url: `${HOST}/?o=1234567890#job/${JOB_ID}/run/${RUN_ID}`,
+	run_page_url: RUN_URL,
 	trigger: 'ONE_TIME',
 	creator_user_name: 'service-principal@example.com',
-	job_parameters: jobParameters({ name: 'fail', value: 'true' }),
+	job_parameters: [jobParameter('fail', { value: 'true' })],
 	start_time: START_TIME,
 	end_time: END_TIME,
 	run_duration: 40469,
@@ -42,73 +63,82 @@ const failedRun: DatabricksJobRun = {
 		termination_details: {
 			code: 'RUN_EXECUTION_ERROR',
 			type: 'CLIENT_ERROR',
-			message: 'Task main failed with message: Workload failed, see run output for details.',
+			message: FAILURE_MESSAGE,
 		},
 	},
-};
+	state: { life_cycle_state: 'TERMINATED', result_state: 'FAILED', state_message: FAILURE_MESSAGE },
+	...overrides,
+});
 
-const succeededRun: DatabricksJobRun = {
-	...failedRun,
-	job_parameters: jobParameters({ name: 'fail', default: 'false' }),
+const succeeded: RunOverrides = {
 	status: { state: 'TERMINATED', termination_details: { code: 'SUCCESS', type: 'SUCCESS' } },
+	state: { life_cycle_state: 'TERMINATED', result_state: 'SUCCESS' },
 };
 
-const runningRun: DatabricksJobRun = {
-	...failedRun,
+const failedRun = listedRun();
+const succeededRun = listedRun(succeeded);
+const runningRun = listedRun({
 	end_time: 0,
 	run_duration: undefined,
 	status: { state: 'RUNNING' },
-};
+	state: { life_cycle_state: 'RUNNING' },
+});
+const terminatingRun = listedRun({
+	...runningRun,
+	status: { state: 'TERMINATING', termination_details: { code: 'SUCCESS', type: 'SUCCESS' } },
+});
 
-const runAt = (runId: number, startTime: number, base: DatabricksJobRun = succeededRun) => ({
+const runAt = (runId: number, startTime: number, base = succeededRun): DatabricksJobRun => ({
 	...base,
 	run_id: runId,
 	start_time: startTime,
 	end_time: base.end_time ? startTime + 1000 : 0,
 });
 
-const simplifiedFailedRun = {
-	event: 'runFailed',
-	job: { id: JOB_ID },
-	run: {
-		id: RUN_ID,
-		name: 'n8n-spike-webhook-test',
-		url: `${HOST}/?o=1234567890#job/${JOB_ID}/run/${RUN_ID}`,
-		trigger: 'ONE_TIME',
-		creator: 'service-principal@example.com',
-		parameters: { fail: 'true' },
-	},
-	result: {
-		state: 'TERMINATED',
-		code: 'RUN_EXECUTION_ERROR',
-		type: 'CLIENT_ERROR',
-		message: 'Task main failed with message: Workload failed, see run output for details.',
-	},
-	timing: {
-		startedAt: '2025-09-01T13:37:18.171Z',
-		endedAt: '2025-09-01T13:37:58.640Z',
-		durationMs: 40469,
-		queuedMs: 14111,
-	},
+const simplifiedRun = {
+	id: RUN_ID,
+	name: 'n8n-spike-webhook-test',
+	url: RUN_URL,
+	trigger: 'ONE_TIME',
+	creator: 'service-principal@example.com',
+	parameters: { fail: 'true' },
 };
 
-class AxiosError extends Error {
-	constructor(
-		message: string,
-		readonly response: { status: number; data: unknown },
-	) {
-		super(message);
-	}
-}
+const failedResult = {
+	state: 'TERMINATED',
+	code: 'RUN_EXECUTION_ERROR',
+	type: 'CLIENT_ERROR',
+	message: FAILURE_MESSAGE,
+};
 
-const apiErrorFromBody = (status: number, data: unknown) =>
-	new NodeApiError(
-		node,
-		new AxiosError(`Request failed with status code ${status}`, {
-			status,
-			data,
-		}) as unknown as JsonObject,
-	);
+const finishedTiming = {
+	startedAt: STARTED_AT,
+	endedAt: ENDED_AT,
+	durationMs: 40469,
+	queuedMs: 14111,
+};
+const inFlightTiming = { startedAt: STARTED_AT, queuedMs: 14111 };
+
+const simplifiedItem = (event: string, overrides: IDataObject = {}) => ({
+	json: { event, job: { id: JOB_ID }, run: simplifiedRun, timing: finishedTiming, ...overrides },
+});
+
+const emitted = (event: string, id: number) => ({ event, run: expect.objectContaining({ id }) });
+
+const tracked = (startMs: number, terminal: boolean) => ({ startMs, started: true, terminal });
+
+const watchingState = (runs: IDataObject = {}, cursorMs = CURSOR): IDataObject => ({
+	jobId: JOB_ID,
+	cursorMs,
+	floorMs: cursorMs - OVERLAP_MS,
+	runs,
+});
+
+const apiErrorFromBody = (status: number, data: JsonObject) =>
+	new NodeApiError(node, {
+		message: `Request failed with status code ${status}`,
+		response: { status, data },
+	});
 
 type ContextOptions = {
 	events?: NodeParameterValueType;
@@ -117,13 +147,6 @@ type ContextOptions = {
 	mode?: 'trigger' | 'manual';
 	staticData?: IDataObject;
 };
-
-const watchingState = (runs: IDataObject = {}, cursorMs = CURSOR): IDataObject => ({
-	jobId: JOB_ID,
-	cursorMs,
-	floorMs: cursorMs - OVERLAP_MS,
-	runs,
-});
 
 const createContext = (options: ContextOptions = {}) => {
 	const context = mockDeep<IPollFunctions>();
@@ -149,9 +172,16 @@ const createContext = (options: ContextOptions = {}) => {
 	const api = context.helpers.httpRequestWithAuthentication;
 	const requestQuery = (call = 0) => api.mock.calls[call][1].qs;
 	const poll = async () => await pollJobRunEvents.call(context);
-	const events = async () =>
-		((await poll()) ?? [[]])[0].map((item) => ({ event: item.json.event, run: item.json.run }));
-	return { context, staticData, api, requestQuery, poll, events };
+	const pollWith = async (runs: DatabricksJobRun[], nextPageToken?: string) => {
+		api.mockResolvedValueOnce({ runs, next_page_token: nextPageToken });
+		return await poll();
+	};
+	const eventsWith = async (runs: DatabricksJobRun[], nextPageToken?: string) =>
+		((await pollWith(runs, nextPageToken)) ?? [[]])[0].map((item) => ({
+			event: item.json.event,
+			run: item.json.run,
+		}));
+	return { context, staticData, api, requestQuery, poll, pollWith, eventsWith };
 };
 
 describe('pollJobRunEvents', () => {
@@ -174,10 +204,7 @@ describe('pollJobRunEvents', () => {
 		});
 
 		it.each([
-			[
-				'state of another job',
-				{ ...watchingState({ '7': { startMs: 5, started: true, terminal: false } }, 5), jobId: 1 },
-			],
+			['state of another job', { ...watchingState({ '7': tracked(5, false) }, 5), jobId: 1 }],
 			['state with a broken shape', { jobId: JOB_ID, cursorMs: 'yesterday', runs: [] }],
 			['state without a floor', { jobId: JOB_ID, cursorMs: CURSOR, runs: {} }],
 			['state with a broken run entry', watchingState({ '7': { startMs: 5 } })],
@@ -193,13 +220,278 @@ describe('pollJobRunEvents', () => {
 	});
 
 	describe('classification', () => {
-		it('emits one runFailed item with the simplified shape for a failed run', async () => {
-			const { context, staticData, api, requestQuery, poll } = createContext({
+		it.each<[string, RunOverrides, string, IDataObject]>([
+			['a failed run', {}, 'runFailed', failedResult],
+			[
+				'a successful run',
+				succeeded,
+				'runSucceeded',
+				{ state: 'TERMINATED', code: 'SUCCESS', type: 'SUCCESS' },
+			],
+			[
+				'a run with task failures',
+				{
+					status: {
+						state: 'TERMINATED',
+						termination_details: { code: 'SUCCESS_WITH_FAILURES', type: 'SUCCESS' },
+					},
+					state: { life_cycle_state: 'TERMINATED', result_state: 'SUCCESS_WITH_FAILURES' },
+				},
+				'runFailed',
+				{ state: 'TERMINATED', code: 'SUCCESS_WITH_FAILURES', type: 'SUCCESS' },
+			],
+			[
+				'termination details with only a failure type',
+				{ status: { state: 'TERMINATED', termination_details: { type: 'INTERNAL_ERROR' } } },
+				'runFailed',
+				{ state: 'TERMINATED', code: 'INTERNAL_ERROR', type: 'INTERNAL_ERROR' },
+			],
+			[
+				'termination details with only a success type',
+				{ status: { state: 'TERMINATED', termination_details: { type: 'SUCCESS' } } },
+				'runSucceeded',
+				{ state: 'TERMINATED', code: 'SUCCESS', type: 'SUCCESS' },
+			],
+			[
+				'a terminated run without termination details',
+				{ status: { state: 'TERMINATED' }, state: undefined },
+				'runFailed',
+				{ state: 'TERMINATED', code: 'TERMINATED' },
+			],
+			[
+				'a run whose status disagrees with its legacy state',
+				{
+					...succeeded,
+					state: {
+						life_cycle_state: 'INTERNAL_ERROR',
+						result_state: 'FAILED',
+						state_message: 'legacy',
+					},
+				},
+				'runSucceeded',
+				{ state: 'TERMINATED', code: 'SUCCESS', type: 'SUCCESS' },
+			],
+			[
+				'a failed legacy run',
+				{
+					status: undefined,
+					state: { life_cycle_state: 'TERMINATED', result_state: 'FAILED', state_message: 'boom' },
+				},
+				'runFailed',
+				{ state: 'TERMINATED', code: 'FAILED', message: 'boom' },
+			],
+			[
+				'a successful legacy run',
+				{ status: undefined, state: { life_cycle_state: 'TERMINATED', result_state: 'SUCCESS' } },
+				'runSucceeded',
+				{ state: 'TERMINATED', code: 'SUCCESS' },
+			],
+			[
+				'a legacy run with task failures',
+				{
+					status: undefined,
+					state: { life_cycle_state: 'TERMINATED', result_state: 'SUCCESS_WITH_FAILURES' },
+				},
+				'runFailed',
+				{ state: 'TERMINATED', code: 'SUCCESS_WITH_FAILURES' },
+			],
+			[
+				'a skipped legacy run',
+				{ status: undefined, state: { life_cycle_state: 'SKIPPED', state_message: 'Run skipped' } },
+				'runFailed',
+				{ state: 'SKIPPED', code: 'SKIPPED', message: 'Run skipped' },
+			],
+			[
+				'an internal error legacy run',
+				{ status: undefined, state: { life_cycle_state: 'INTERNAL_ERROR' } },
+				'runFailed',
+				{ state: 'INTERNAL_ERROR', code: 'INTERNAL_ERROR' },
+			],
+		])('classifies %s', async (_label, overrides, event, result) => {
+			const { staticData, pollWith } = createContext({ staticData: watchingState() });
+
+			await expect(pollWith([listedRun(overrides)])).resolves.toEqual([
+				[simplifiedItem(event, { result })],
+			]);
+			expect(staticData).toEqual(
+				watchingState({ [RUN_ID]: tracked(START_TIME, true) }, START_TIME),
+			);
+		});
+
+		it.each<[string, RunOverrides]>([
+			...STATUS_IN_FLIGHT.map((state): [string, RunOverrides] => [
+				`status.state ${state}`,
+				{ status: { state } },
+			]),
+			['status.state TERMINATING with termination details', terminatingRun],
+			[
+				'status.state RUNNING over a terminated legacy state',
+				{ state: { life_cycle_state: 'TERMINATED', result_state: 'SUCCESS' } },
+			],
+			...LEGACY_IN_FLIGHT.map((life_cycle_state): [string, RunOverrides] => [
+				`legacy life_cycle_state ${life_cycle_state}`,
+				{ status: undefined, state: { life_cycle_state } },
+			]),
+		])('treats %s as in flight', async (_label, overrides) => {
+			const { staticData, pollWith } = createContext({
+				events: ALL_EVENTS,
 				staticData: watchingState(),
 			});
-			api.mockResolvedValue({ runs: [failedRun] });
 
-			await expect(poll()).resolves.toEqual([[{ json: simplifiedFailedRun }]]);
+			await expect(pollWith([{ ...runningRun, ...overrides }])).resolves.toEqual([
+				[simplifiedItem('runStarted', { timing: inFlightTiming })],
+			]);
+			expect(staticData).toEqual(
+				watchingState({ [RUN_ID]: tracked(START_TIME, false) }, START_TIME),
+			);
+		});
+
+		it.each<[string, RunOverrides, IDataObject]>([
+			[
+				'run_duration is missing',
+				{ run_duration: undefined },
+				{ ...finishedTiming, durationMs: END_TIME - START_TIME },
+			],
+			[
+				'queue_duration is missing',
+				{ queue_duration: undefined },
+				{ startedAt: STARTED_AT, endedAt: ENDED_AT, durationMs: 40469 },
+			],
+		])('simplifies the timing when %s', async (_label, overrides, timing) => {
+			const { pollWith } = createContext({ staticData: watchingState() });
+
+			await expect(pollWith([listedRun(overrides)])).resolves.toEqual([
+				[simplifiedItem('runFailed', { result: failedResult, timing })],
+			]);
+		});
+
+		it.each<[string, DatabricksJobRun['job_parameters'], IDataObject]>([
+			['a value', [jobParameter('fail', { value: 'true' })], { fail: 'true' }],
+			['a default', [jobParameter('fail', { default: 'false' })], { fail: 'false' }],
+			[
+				'a value over its default',
+				[jobParameter('fail', { value: 'true', default: 'false' })],
+				{ fail: 'true' },
+			],
+			['no name', [{ value: 'true' }], {}],
+			['no parameters', undefined, {}],
+		])('reads a job parameter with %s', async (_label, job_parameters, parameters) => {
+			const { pollWith } = createContext({ staticData: watchingState() });
+
+			await expect(pollWith([listedRun({ job_parameters })])).resolves.toEqual([
+				[
+					simplifiedItem('runFailed', {
+						result: failedResult,
+						run: { ...simplifiedRun, parameters },
+					}),
+				],
+			]);
+		});
+
+		it('returns the raw run behind the event label when simplify is off', async () => {
+			const { pollWith } = createContext({ simplify: false, staticData: watchingState() });
+
+			await expect(pollWith([failedRun])).resolves.toEqual([
+				[{ json: { event: 'runFailed', ...failedRun } }],
+			]);
+		});
+
+		it('skips runs without a run ID or start time', async () => {
+			const { staticData, pollWith } = createContext({ staticData: watchingState() });
+
+			await expect(
+				pollWith([
+					{ ...failedRun, run_id: undefined },
+					{ ...failedRun, start_time: undefined },
+					{ ...runningRun, start_time: 0 },
+				]),
+			).resolves.toBeNull();
+			expect(staticData).toEqual(watchingState());
+		});
+	});
+
+	describe('run lifecycle across polls', () => {
+		it('tracks a running run without emitting when runStarted is not subscribed', async () => {
+			const { staticData, pollWith } = createContext({ staticData: watchingState() });
+
+			await expect(pollWith([runningRun])).resolves.toBeNull();
+			expect(staticData).toEqual(
+				watchingState({ [RUN_ID]: tracked(START_TIME, false) }, START_TIME),
+			);
+		});
+
+		it.each([
+			['a running run', runningRun],
+			['a terminating run', terminatingRun],
+		])(
+			'emits the terminal event once, without a second runStarted, when %s finishes',
+			async (_label, inFlight) => {
+				const { staticData, eventsWith } = createContext({
+					events: ['runStarted', 'runSucceeded'],
+					staticData: watchingState(),
+				});
+
+				await expect(eventsWith([inFlight])).resolves.toEqual([emitted('runStarted', RUN_ID)]);
+				expect(staticData).toEqual(
+					watchingState({ [RUN_ID]: tracked(START_TIME, false) }, START_TIME),
+				);
+
+				await expect(eventsWith([succeededRun])).resolves.toEqual([
+					emitted('runSucceeded', RUN_ID),
+				]);
+				expect(staticData).toEqual(
+					watchingState({ [RUN_ID]: tracked(START_TIME, true) }, START_TIME),
+				);
+
+				await expect(eventsWith([succeededRun])).resolves.toEqual([]);
+			},
+		);
+
+		it('emits runStarted then the terminal event for a run that started and finished between polls', async () => {
+			const { eventsWith } = createContext({ events: ALL_EVENTS, staticData: watchingState() });
+
+			await expect(eventsWith([succeededRun])).resolves.toEqual([
+				emitted('runStarted', RUN_ID),
+				emitted('runSucceeded', RUN_ID),
+			]);
+		});
+
+		it('does not emit a terminal run again when the overlap window lists it a second time', async () => {
+			const { api, pollWith } = createContext({ staticData: watchingState() });
+
+			await expect(pollWith([failedRun])).resolves.toHaveLength(1);
+			await expect(pollWith([failedRun])).resolves.toBeNull();
+			await expect(pollWith([failedRun])).resolves.toBeNull();
+			expect(api).toHaveBeenCalledTimes(3);
+		});
+
+		it.each([
+			[
+				'start times',
+				[runAt(3, START_TIME + 2000), runAt(1, START_TIME), runAt(2, START_TIME + 1000)],
+			],
+			[
+				'run IDs when the start times match',
+				[runAt(3, START_TIME), runAt(1, START_TIME), runAt(2, START_TIME)],
+			],
+		])('emits several new runs ordered by %s', async (_label, runs) => {
+			const { eventsWith } = createContext({ staticData: watchingState() });
+
+			await expect(eventsWith(runs)).resolves.toEqual([
+				emitted('runSucceeded', 1),
+				emitted('runSucceeded', 2),
+				emitted('runSucceeded', 3),
+			]);
+		});
+	});
+
+	describe('cursor', () => {
+		it('lists the runs of the job from five minutes before the cursor', async () => {
+			const { context, api, requestQuery, pollWith } = createContext({
+				staticData: watchingState(),
+			});
+
+			await pollWith([failedRun]);
 
 			expect(context.getNodeParameter).toHaveBeenCalledWith('jobId', '', { extractValue: true });
 			expect(api).toHaveBeenCalledTimes(1);
@@ -208,285 +500,80 @@ describe('pollJobRunEvents', () => {
 				start_time_from: CURSOR - OVERLAP_MS,
 				limit: JOB_RUNS_MAX_PAGE_SIZE,
 			});
-			expect(staticData).toEqual(
-				watchingState(
-					{ [RUN_ID]: { startMs: START_TIME, started: true, terminal: true } },
-					START_TIME,
-				),
-			);
 		});
 
-		it('emits runSucceeded with code SUCCESS and no message for a successful run', async () => {
-			const { api, poll } = createContext({ staticData: watchingState() });
-			api.mockResolvedValue({ runs: [succeededRun] });
-
-			const result = await poll();
-
-			expect(result).toHaveLength(1);
-			expect(result?.[0]).toHaveLength(1);
-			expect(result?.[0][0].json).toMatchObject({
-				event: 'runSucceeded',
-				run: { parameters: { fail: 'false' } },
-				result: { state: 'TERMINATED', code: 'SUCCESS', type: 'SUCCESS' },
-			});
-			expect(result?.[0][0].json.result).not.toHaveProperty('message');
-		});
-
-		it('derives durationMs from the start and end times when the run has no run_duration', async () => {
-			const { api, poll } = createContext({ staticData: watchingState() });
-			api.mockResolvedValue({ runs: [{ ...failedRun, run_duration: undefined }] });
-
-			const result = await poll();
-
-			expect(result?.[0][0].json.timing).toMatchObject({ durationMs: END_TIME - START_TIME });
-		});
-
-		it.each([
-			[
-				'a failed legacy run',
-				{ life_cycle_state: 'TERMINATED', result_state: 'FAILED', state_message: 'boom' },
-				{ event: 'runFailed', result: { state: 'TERMINATED', code: 'FAILED', message: 'boom' } },
-			],
-			[
-				'a successful legacy run',
-				{ life_cycle_state: 'TERMINATED', result_state: 'SUCCESS' },
-				{ event: 'runSucceeded', result: { state: 'TERMINATED', code: 'SUCCESS' } },
-			],
-			[
-				'a skipped legacy run',
-				{ life_cycle_state: 'SKIPPED', state_message: 'Run skipped' },
-				{
-					event: 'runFailed',
-					result: { state: 'SKIPPED', code: 'SKIPPED', message: 'Run skipped' },
-				},
-			],
-			[
-				'an internal error legacy run',
-				{ life_cycle_state: 'INTERNAL_ERROR' },
-				{ event: 'runFailed', result: { state: 'INTERNAL_ERROR', code: 'INTERNAL_ERROR' } },
-			],
-		])('classifies %s from the legacy state fields', async (_label, state, expected) => {
-			const { api, poll } = createContext({
-				events: ['runFailed', 'runStarted', 'runSucceeded'],
-				staticData: watchingState(),
-			});
-			api.mockResolvedValue({ runs: [{ ...failedRun, status: undefined, state }] });
-
-			const result = await poll();
-
-			expect(result?.[0].map((item) => item.json.event)).toEqual(['runStarted', expected.event]);
-			expect(result?.[0][1].json).toMatchObject(expected);
-		});
-
-		it('treats a legacy run without a terminal life cycle state as still running', async () => {
-			const { api, events } = createContext({
-				events: ['runFailed', 'runStarted', 'runSucceeded'],
-				staticData: watchingState(),
-			});
-			api.mockResolvedValue({
-				runs: [{ ...runningRun, status: undefined, state: { life_cycle_state: 'RUNNING' } }],
-			});
-
-			await expect(events()).resolves.toEqual([{ event: 'runStarted', run: expect.anything() }]);
-		});
-
-		it('returns the raw run behind the event label when simplify is off', async () => {
-			const { api, poll } = createContext({ simplify: false, staticData: watchingState() });
-			api.mockResolvedValue({ runs: [failedRun] });
-
-			await expect(poll()).resolves.toEqual([[{ json: { event: 'runFailed', ...failedRun } }]]);
-		});
-
-		it('skips runs without a run ID or start time', async () => {
-			const { staticData, api, poll } = createContext({ staticData: watchingState() });
-			api.mockResolvedValue({
-				runs: [
-					{ ...failedRun, run_id: undefined },
-					{ ...failedRun, start_time: undefined },
-					{ ...runningRun, start_time: 0 },
-				],
-			});
-
-			await expect(poll()).resolves.toBeNull();
-			expect(staticData).toEqual(watchingState());
-		});
-	});
-
-	describe('run lifecycle across polls', () => {
-		it('emits runStarted for a running run only when subscribed', async () => {
-			const unsubscribed = createContext({ staticData: watchingState() });
-			unsubscribed.api.mockResolvedValue({ runs: [runningRun] });
-			await expect(unsubscribed.poll()).resolves.toBeNull();
-
-			const subscribed = createContext({
-				events: ['runStarted', 'runSucceeded'],
-				staticData: watchingState(),
-			});
-			subscribed.api.mockResolvedValue({ runs: [runningRun] });
-			const result = await subscribed.poll();
-
-			expect(result?.[0]).toHaveLength(1);
-			expect(result?.[0][0].json).toEqual({
-				event: 'runStarted',
-				job: { id: JOB_ID },
-				run: simplifiedFailedRun.run,
-				timing: { startedAt: '2025-09-01T13:37:18.171Z', queuedMs: 14111 },
-			});
-			expect(result?.[0][0].json).not.toHaveProperty('result');
-			expect(result?.[0][0].json.timing).not.toHaveProperty('endedAt');
-			expect(result?.[0][0].json.timing).not.toHaveProperty('durationMs');
-		});
-
-		it('emits the terminal event once, without a second runStarted, when a running run finishes', async () => {
-			const { staticData, api, events } = createContext({
-				events: ['runStarted', 'runSucceeded'],
-				staticData: watchingState(),
-			});
-			api.mockResolvedValueOnce({ runs: [runningRun] });
-			await events();
-			expect(staticData).toMatchObject({
-				cursorMs: START_TIME,
-				runs: { [RUN_ID]: { startMs: START_TIME, started: true, terminal: false } },
-			});
-
-			api.mockResolvedValueOnce({ runs: [succeededRun] });
-			await expect(events()).resolves.toEqual([
-				{ event: 'runSucceeded', run: expect.objectContaining({ id: RUN_ID }) },
-			]);
-			expect(staticData).toMatchObject({
-				cursorMs: START_TIME,
-				runs: { [RUN_ID]: { startMs: START_TIME, started: true, terminal: true } },
-			});
-
-			api.mockResolvedValueOnce({ runs: [succeededRun] });
-			await expect(events()).resolves.toEqual([]);
-		});
-
-		it('emits runStarted then the terminal event for a run that started and finished between polls', async () => {
-			const { api, events } = createContext({
-				events: ['runFailed', 'runStarted', 'runSucceeded'],
-				staticData: watchingState(),
-			});
-			api.mockResolvedValue({ runs: [succeededRun] });
-
-			await expect(events()).resolves.toEqual([
-				{ event: 'runStarted', run: expect.objectContaining({ id: RUN_ID }) },
-				{ event: 'runSucceeded', run: expect.objectContaining({ id: RUN_ID }) },
-			]);
-		});
-
-		it('does not emit a terminal run again when the overlap window lists it a second time', async () => {
-			const { api, poll } = createContext({ staticData: watchingState() });
-			api.mockResolvedValue({ runs: [failedRun] });
-
-			await expect(poll()).resolves.toHaveLength(1);
-			await expect(poll()).resolves.toBeNull();
-			await expect(poll()).resolves.toBeNull();
-			expect(api).toHaveBeenCalledTimes(3);
-		});
-
-		it('emits several new runs oldest first', async () => {
-			const t1 = START_TIME;
-			const t2 = START_TIME + 60_000;
-			const t3 = START_TIME + 120_000;
-			const { api, events } = createContext({ staticData: watchingState() });
-			api.mockResolvedValue({ runs: [runAt(3, t3), runAt(1, t1), runAt(2, t2)] });
-
-			const result = await events();
-
-			expect(result.map((item) => item.run)).toEqual([
-				expect.objectContaining({ id: 1 }),
-				expect.objectContaining({ id: 2 }),
-				expect.objectContaining({ id: 3 }),
-			]);
-		});
-	});
-
-	describe('cursor', () => {
 		it('never advances past the oldest run that is still in flight', async () => {
 			const t1 = START_TIME;
 			const t2 = START_TIME + 60_000;
-			const { staticData, api, requestQuery, poll } = createContext({
+			const listing = [runAt(2, t2), runAt(1, t1, runningRun)];
+			const { staticData, requestQuery, pollWith } = createContext({
 				staticData: watchingState(),
 			});
-			api.mockResolvedValue({ runs: [runAt(2, t2), runAt(1, t1, runningRun)] });
 
-			await poll();
-			expect(staticData).toMatchObject({ cursorMs: t1 });
+			await pollWith(listing);
+			expect(staticData).toEqual(
+				watchingState({ '1': tracked(t1, false), '2': tracked(t2, true) }, t1),
+			);
 
-			await poll();
+			await pollWith(listing);
 			expect(requestQuery(1)).toMatchObject({ start_time_from: t1 - OVERLAP_MS });
 		});
 
 		it('advances past an in-flight run once it finishes and drops entries the window can no longer list', async () => {
 			const t1 = START_TIME;
 			const t2 = START_TIME + OVERLAP_MS + 60_000;
-			const { staticData, api, poll } = createContext({ staticData: watchingState() });
-			api.mockResolvedValueOnce({ runs: [runAt(2, t2), runAt(1, t1, runningRun)] });
-			await poll();
+			const { staticData, pollWith } = createContext({ staticData: watchingState() });
+
+			await pollWith([runAt(2, t2), runAt(1, t1, runningRun)]);
 			expect(staticData).toMatchObject({ cursorMs: t1 });
 
-			api.mockResolvedValueOnce({ runs: [runAt(2, t2), runAt(1, t1)] });
-			await poll();
-
-			expect(staticData).toEqual(
-				watchingState({ '2': { startMs: t2, started: true, terminal: true } }, t2),
-			);
+			await pollWith([runAt(2, t2), runAt(1, t1)]);
+			expect(staticData).toEqual(watchingState({ '2': tracked(t2, true) }, t2));
 		});
 
 		it('drops an in-flight run that vanished from the listing and advances the cursor', async () => {
 			const t1 = START_TIME;
 			const t2 = START_TIME + 60_000;
-			const { staticData, api, events } = createContext({
-				staticData: watchingState({ '1': { startMs: t1, started: true, terminal: false } }, t1),
+			const { staticData, eventsWith } = createContext({
+				staticData: watchingState({ '1': tracked(t1, false) }, t1),
 			});
-			api.mockResolvedValue({ runs: [runAt(2, t2)] });
 
-			await expect(events()).resolves.toEqual([
-				{ event: 'runSucceeded', run: expect.objectContaining({ id: 2 }) },
-			]);
-			expect(staticData).toEqual(
-				watchingState({ '2': { startMs: t2, started: true, terminal: true } }, t2),
-			);
+			await expect(eventsWith([runAt(2, t2)])).resolves.toEqual([emitted('runSucceeded', 2)]);
+			expect(staticData).toEqual(watchingState({ '2': tracked(t2, true) }, t2));
 		});
 
 		it('keeps the listing window above runs it already pruned when the cursor moves back to an in-flight run', async () => {
 			const tA = START_TIME - OVERLAP_MS;
 			const tB = START_TIME + 60_000;
 			const tX = tB - 30_000;
-			const { staticData, api, requestQuery, events } = createContext({
-				events: ['runFailed', 'runStarted', 'runSucceeded'],
+			const { staticData, requestQuery, eventsWith } = createContext({
+				events: ALL_EVENTS,
 				staticData: watchingState(),
 			});
-			api.mockResolvedValueOnce({ runs: [runAt(2, tB), runAt(1, tA)] });
-			await events();
-			expect(staticData).toEqual(
-				watchingState({ '2': { startMs: tB, started: true, terminal: true } }, tB),
-			);
 
-			api.mockResolvedValueOnce({ runs: [runAt(2, tB), runAt(3, tX, runningRun)] });
-			await expect(events()).resolves.toEqual([
-				{ event: 'runStarted', run: expect.objectContaining({ id: 3 }) },
+			await eventsWith([runAt(2, tB), runAt(1, tA)]);
+			expect(staticData).toEqual(watchingState({ '2': tracked(tB, true) }, tB));
+
+			await expect(eventsWith([runAt(2, tB), runAt(3, tX, runningRun)])).resolves.toEqual([
+				emitted('runStarted', 3),
 			]);
 			expect(staticData).toMatchObject({ cursorMs: tX, floorMs: tB - OVERLAP_MS });
 
-			api.mockResolvedValueOnce({ runs: [runAt(2, tB), runAt(3, tX, runningRun)] });
-			await expect(events()).resolves.toEqual([]);
+			await expect(eventsWith([runAt(2, tB), runAt(3, tX, runningRun)])).resolves.toEqual([]);
 			expect(requestQuery(2)).toMatchObject({ start_time_from: tB - OVERLAP_MS });
 		});
 
 		it('keeps the cursor when the poll lists no runs', async () => {
-			const { staticData, api, poll } = createContext({ staticData: watchingState() });
-			api.mockResolvedValue({ runs: [] });
+			const { staticData, pollWith } = createContext({ staticData: watchingState() });
 
-			await expect(poll()).resolves.toBeNull();
+			await expect(pollWith([])).resolves.toBeNull();
 			expect(staticData).toEqual(watchingState());
 		});
 
 		it('pins the cursor to the oldest listed run and keeps every entry when the listing is truncated', async () => {
 			const t1 = START_TIME;
 			const t2 = START_TIME + 60_000;
-			const stale = { startMs: CURSOR - 2 * OVERLAP_MS, started: true, terminal: false };
+			const stale = tracked(CURSOR - 2 * OVERLAP_MS, false);
 			const { context, staticData, api, poll } = createContext({
 				staticData: watchingState({ '9': stale }),
 			});
@@ -496,14 +583,7 @@ describe('pollJobRunEvents', () => {
 
 			expect(api).toHaveBeenCalledTimes(DEFAULT_MAX_PAGES);
 			expect(staticData).toEqual(
-				watchingState(
-					{
-						'1': { startMs: t1, started: true, terminal: true },
-						'2': { startMs: t2, started: true, terminal: true },
-						'9': stale,
-					},
-					t1,
-				),
+				watchingState({ '1': tracked(t1, true), '2': tracked(t2, true), '9': stale }, t1),
 			);
 			expect(context.logger.warn).toHaveBeenCalledTimes(1);
 			expect(context.logger.warn).toHaveBeenCalledWith(expect.stringContaining(String(JOB_ID)));
@@ -512,19 +592,20 @@ describe('pollJobRunEvents', () => {
 
 	describe('manual mode', () => {
 		it('lists one page without a start time and leaves the static data alone', async () => {
-			const { context, staticData, api, requestQuery, events } = createContext({
+			const { context, staticData, api, requestQuery, eventsWith } = createContext({
 				mode: 'manual',
-				events: ['runFailed', 'runStarted', 'runSucceeded'],
-			});
-			api.mockResolvedValue({
-				runs: [runAt(3, START_TIME + 2000, runningRun), runAt(2, START_TIME + 1000), failedRun],
-				next_page_token: 'ignored',
+				events: ALL_EVENTS,
 			});
 
-			await expect(events()).resolves.toEqual([
-				{ event: 'runFailed', run: expect.objectContaining({ id: RUN_ID }) },
-				{ event: 'runSucceeded', run: expect.objectContaining({ id: 2 }) },
-				{ event: 'runStarted', run: expect.objectContaining({ id: 3 }) },
+			await expect(
+				eventsWith(
+					[runAt(3, START_TIME + 2000, runningRun), runAt(2, START_TIME + 1000), failedRun],
+					'ignored',
+				),
+			).resolves.toEqual([
+				emitted('runFailed', RUN_ID),
+				emitted('runSucceeded', 2),
+				emitted('runStarted', 3),
 			]);
 			expect(api).toHaveBeenCalledTimes(1);
 			expect(requestQuery()).toEqual({ job_id: JOB_ID, limit: JOB_RUNS_MAX_PAGE_SIZE });
@@ -533,17 +614,15 @@ describe('pollJobRunEvents', () => {
 		});
 
 		it('only returns the subscribed events', async () => {
-			const { api, poll } = createContext({ mode: 'manual', events: ['runStarted'] });
-			api.mockResolvedValue({ runs: [failedRun, succeededRun] });
+			const { pollWith } = createContext({ mode: 'manual', events: ['runStarted'] });
 
-			await expect(poll()).resolves.toBeNull();
+			await expect(pollWith([failedRun, succeededRun])).resolves.toBeNull();
 		});
 
 		it('returns null when the job has no runs', async () => {
-			const { api, poll } = createContext({ mode: 'manual' });
-			api.mockResolvedValue({ runs: [] });
+			const { pollWith } = createContext({ mode: 'manual' });
 
-			await expect(poll()).resolves.toBeNull();
+			await expect(pollWith([])).resolves.toBeNull();
 		});
 	});
 
