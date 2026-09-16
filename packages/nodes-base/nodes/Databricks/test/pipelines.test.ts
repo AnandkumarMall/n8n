@@ -67,9 +67,12 @@ describe('getPipelines', () => {
 		expect(requestQuery()).toEqual({ max_results: PIPELINES_PAGE_SIZE, page_token: 'p2' });
 	});
 
-	it('treats a blank next token and a missing list as the last empty page', async () => {
+	it.each([
+		['a blank next token', ''],
+		['a null next token', null],
+	])('treats %s and a missing list as the last empty page', async (_label, nextPageToken) => {
 		const { api, search } = createContext();
-		api.mockResolvedValue({ next_page_token: '' });
+		api.mockResolvedValue({ next_page_token: nextPageToken });
 
 		await expect(search()).resolves.toEqual({ results: [] });
 	});

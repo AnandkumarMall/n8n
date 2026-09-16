@@ -32,9 +32,11 @@ type PipelineUpdateEvent = (typeof PIPELINE_UPDATE_EVENTS)[number];
 
 type PipelineException = NonNullable<NonNullable<PipelineEvent['error']>['exceptions']>[number];
 
+type StackFrame = NonNullable<PipelineException['stack']>[number];
+
 type UpdateProgress = { raw: PipelineEvent; updateId: string; state: string; timestampMs: number };
 
-type TrackedUpdate = { startedMs?: number; endedMs?: number };
+type TrackedUpdate = { startedMs?: number; runningMs?: number; endedMs?: number };
 
 type TrackedUpdates = Record<string, TrackedUpdate>;
 
@@ -56,11 +58,16 @@ function isUuid(value: unknown): value is string {
 	return typeof value === 'string' && UUID_PATTERN.test(value);
 }
 
+function isOptionalNumber(value: unknown): value is number | undefined {
+	return value === undefined || typeof value === 'number';
+}
+
 function isTrackedUpdate(value: unknown): value is TrackedUpdate {
 	return (
 		isRecord(value) &&
-		(value.startedMs === undefined || typeof value.startedMs === 'number') &&
-		(value.endedMs === undefined || typeof value.endedMs === 'number')
+		isOptionalNumber(value.startedMs) &&
+		isOptionalNumber(value.runningMs) &&
+		isOptionalNumber(value.endedMs)
 	);
 }
 
@@ -128,23 +135,37 @@ function collectNewEvents(
 		entry = {};
 		updates[progress.updateId] = entry;
 	}
-	const terminal = terminalEventOf(progress.state);
-	if (terminal === undefined) {
-		if (entry.startedMs !== undefined || entry.endedMs !== undefined) return [];
-		entry.startedMs = progress.timestampMs;
-		return ['updateStarted'];
-	}
 	if (entry.endedMs !== undefined) return [];
-	entry.endedMs = progress.timestampMs;
-	return [terminal];
+	const terminal = terminalEventOf(progress.state);
+	if (terminal !== undefined) {
+		entry.endedMs = progress.timestampMs;
+		return [terminal];
+	}
+	if (progress.state === 'RUNNING' && entry.runningMs === undefined) {
+		entry.runningMs = progress.timestampMs;
+	}
+	if (entry.startedMs !== undefined) return [];
+	entry.startedMs = progress.timestampMs;
+	return ['updateStarted'];
+}
+
+function simplifyFrame(frame: StackFrame): IDataObject {
+	return withoutUndefined({
+		class: frame.declaring_class,
+		method: frame.method_name,
+		file: frame.file_name,
+		line: frame.line_number,
+	});
 }
 
 function simplifyException(exception: PipelineException): IDataObject {
+	const stack = exception.stack ?? [];
 	return withoutUndefined({
 		type: exception.class_name,
 		code: exception.error_class,
 		sqlState: exception.sql_state,
 		message: exception.message,
+		stack: stack.length > 0 ? stack.map(simplifyFrame) : undefined,
 	});
 }
 
@@ -162,12 +183,16 @@ function simplifyTiming(
 	progress: UpdateProgress,
 	entry: TrackedUpdate,
 ): IDataObject {
-	if (event === 'updateStarted') return { startedAt: toIso(progress.timestampMs) };
-	const { startedMs } = entry;
-	return withoutUndefined({
+	const { startedMs, runningMs } = entry;
+	const started = withoutUndefined({
 		startedAt: startedMs === undefined ? undefined : toIso(startedMs),
+		runningAt: runningMs === undefined ? undefined : toIso(runningMs),
+	});
+	if (event === 'updateStarted') return started;
+	return withoutUndefined({
+		...started,
 		endedAt: toIso(progress.timestampMs),
-		durationMs: startedMs === undefined ? undefined : progress.timestampMs - startedMs,
+		durationMs: runningMs === undefined ? undefined : progress.timestampMs - runningMs,
 	});
 }
 
