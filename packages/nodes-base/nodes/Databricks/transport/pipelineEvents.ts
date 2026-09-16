@@ -8,7 +8,7 @@ import {
 	type DatabricksContext,
 	type DatabricksCredentialType,
 } from '../actions/helpers';
-import { clampPageSize, collectPages, DEFAULT_MAX_PAGES, toPage, type Page } from './pagination';
+import { clampPageSize, collectPages, toPage, type Page, type PageLimits } from './pagination';
 
 export const PIPELINE_EVENTS_MAX_PAGE_SIZE = 1000;
 const PIPELINE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -59,7 +59,7 @@ export type PipelineEvent = {
 export interface ListPipelineEventsParams {
 	pipelineId: string;
 	after?: IsoUtcTimestamp;
-	levels?: readonly string[];
+	levels?: readonly PipelineEventLevel[];
 	order?: 'asc' | 'desc';
 	pageSize?: number;
 	pageToken?: string;
@@ -71,7 +71,7 @@ function isPipelineEventsResponse(value: unknown): value is PipelineEventsRespon
 	return isRecord(value) && (value.events === undefined || Array.isArray(value.events));
 }
 
-function isPipelineEventLevel(level: string): level is PipelineEventLevel {
+export function isPipelineEventLevel(level: string): level is PipelineEventLevel {
 	return PIPELINE_EVENT_LEVELS.some((known) => known === level);
 }
 
@@ -163,13 +163,13 @@ export async function listAllPipelineEvents(
 	context: DatabricksContext,
 	credentialType: DatabricksCredentialType,
 	params: ListPipelineEventsParams,
-	maxPages = DEFAULT_MAX_PAGES,
+	limits: PageLimits,
 ): Promise<Page<PipelineEvent>> {
 	const host = await getHost(context, credentialType);
 	return await collectPages(
 		async (pageToken) =>
 			await fetchPipelineEventsPage(context, credentialType, host, { ...params, pageToken }),
+		limits,
 		params.pageToken,
-		maxPages,
 	);
 }
