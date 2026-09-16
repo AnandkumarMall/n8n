@@ -10,7 +10,6 @@ import { useZoomAdjustedValues } from '../../../../composables/useZoomAdjustedVa
 import CanvasNodeSettingsIcons from './parts/CanvasNodeSettingsIcons.vue';
 import { useNodePrivateCredential } from '@/features/resolvers/composables/useNodePrivateCredential';
 import { useNodeHelpers } from '@/app/composables/useNodeHelpers';
-import { useNodeTypeRestriction } from '@/app/composables/useNodeTypeRestriction';
 import { calculateNodeSize } from '@/app/utils/nodeViewUtils';
 import ExperimentalInPlaceNodeSettings from '../../../../experimental/components/ExperimentalEmbeddedNodeDetails.vue';
 import CanvasNodeTooltip from './parts/CanvasNodeTooltip.vue';
@@ -36,7 +35,6 @@ const route = useRoute();
 const {
 	id,
 	name,
-	type,
 	label,
 	subtitle,
 	connections,
@@ -50,10 +48,10 @@ const {
 	hasRunData,
 	render,
 	isNotInstalledCommunityNode,
+	isRestricted,
 } = useCanvasNode();
 const { hasPrivateCredential, tooltipText: privateCredentialTooltip } =
 	useNodePrivateCredential(name);
-const { isRestricted } = useNodeTypeRestriction(type);
 const renderData = injectCanvasRenderData();
 const inputs = computed(() => renderData.value.nodeInputsByNodeId.get(id.value)?.value ?? []);
 const outputs = computed(() => renderData.value.nodeOutputsByNodeId.get(id.value)?.value ?? []);
@@ -88,8 +86,6 @@ const classes = computed(() => {
 	return {
 		[$style.node]: true,
 		[$style.selected]: isSelected.value,
-		// A restricted node borrows the deactivated look (grey border, greyed icon); the red lock in
-		// the status corner is what tells the two apart.
 		[$style.disabled]:
 			isDisabled.value ||
 			isRestricted.value ||

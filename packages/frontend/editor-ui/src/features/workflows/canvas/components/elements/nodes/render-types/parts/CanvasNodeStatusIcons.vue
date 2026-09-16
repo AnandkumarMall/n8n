@@ -2,7 +2,6 @@
 import { computed, useCssModule } from 'vue';
 import TitledList from '@/app/components/TitledList.vue';
 import { useNodeHelpers } from '@/app/composables/useNodeHelpers';
-import { useNodeTypeRestriction } from '@/app/composables/useNodeTypeRestriction';
 import { useCanvasNode } from '../../../../../composables/useCanvasNode';
 import { injectCanvasRenderData } from '@/features/workflows/canvas/canvas.utils';
 import { useI18n } from '@n8n/i18n';
@@ -29,7 +28,6 @@ const $style = useCssModule();
 const {
 	id,
 	name,
-	type,
 	validationErrors,
 	hasValidationErrors,
 	executionStatus,
@@ -38,8 +36,9 @@ const {
 	isDisabled,
 	render,
 	isNotInstalledCommunityNode,
+	isRestricted,
+	restrictionScope,
 } = useCanvasNode();
-const { isRestricted, title: restrictionTitle } = useNodeTypeRestriction(type);
 const renderData = injectCanvasRenderData();
 const executionErrors = computed(
 	() => renderData.value.executionIssuesByNodeId.get(id.value)?.value ?? [],
@@ -69,6 +68,14 @@ const commonClasses = computed(() => [
 	spinnerScrim ? $style.spinnerScrim : '',
 	spinnerLayout === 'absolute' ? $style.absoluteSpinner : '',
 ]);
+
+const restrictionTitle = computed(() =>
+	i18n.baseText(
+		restrictionScope.value === 'project'
+			? 'node.restricted.project.title'
+			: 'node.restricted.instance.title',
+	),
+);
 
 const groupedExecutionErrors = computed(() => {
 	const errorCounts = executionErrors.value.reduce(

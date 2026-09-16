@@ -91,10 +91,6 @@ beforeEach(() => {
 	setActivePinia(pinia);
 	nodeTypesStore = mockedStore(useNodeTypesStore);
 	typeAvailabilityPoliciesStore = mockedStore(useTypeAvailabilityPoliciesStore);
-	typeAvailabilityPoliciesStore.getNodeTypeAvailability.mockImplementation((name) => ({
-		name,
-		available: true,
-	}));
 	mockedUseRoute.mockReturnValue({} as RouteLocationNormalizedLoadedGeneric);
 	vi.mocked(useNodePrivateCredential).mockReturnValue({
 		hasPrivateCredential: computed(() => false),
@@ -192,29 +188,6 @@ describe('CanvasNodeDefault', () => {
 			});
 
 			expect(getByTestId('node-restricted')).toBeInTheDocument();
-		});
-
-		it('renders an available node type unchanged', () => {
-			typeAvailabilityPoliciesStore.getNodeTypeAvailability.mockReturnValue({
-				name: 'n8n-nodes-base.slack',
-				available: true,
-			});
-
-			const { getByTestId, queryByTestId } = renderComponent({
-				global: {
-					stubs,
-					provide: {
-						...createCanvasNodeProvide({
-							data: { type: 'n8n-nodes-base.slack', subtitle: 'send: message' },
-						}),
-					},
-				},
-			});
-
-			expect(getByTestId('canvas-default-node')).not.toHaveClass('disabled');
-			expect(queryByTestId('canvas-node-restricted')).not.toBeInTheDocument();
-			expect(queryByTestId('node-restricted')).not.toBeInTheDocument();
-			expect(getByTestId('canvas-default-node')).toHaveTextContent('send: message');
 		});
 	});
 

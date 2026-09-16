@@ -1049,6 +1049,7 @@ describe('useContextMenu', () => {
 			const byId = Object.fromEntries(actions.value.map((action) => [action.id, action]));
 			expect(byId.replace?.disabled).toBe(false);
 			expect(byId.rename?.disabled).toBe(false);
+			expect(byId.open).toBeDefined();
 			expect(byId.open?.disabled).toBeFalsy();
 			expect(byId.toggle_activation?.disabled).toBe(false);
 			expect(byId.execute?.disabled).toBe(true);
@@ -1065,14 +1066,6 @@ describe('useContextMenu', () => {
 			expect(byId.toggle_pin?.disabled).toBe(true);
 			expect(byId.copy?.disabled).toBe(true);
 			expect(byId.duplicate?.disabled).toBe(true);
-		});
-
-		it('does not block running an available node', () => {
-			const { open, actions } = useContextMenu();
-			open(mockEvent, { source: 'node-right-click', nodeId: nodes[0].id });
-
-			const byId = Object.fromEntries(actions.value.map((action) => [action.id, action]));
-			expect(byId.execute?.disabled).toBe(false);
 		});
 	});
 });

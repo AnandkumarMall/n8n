@@ -4664,10 +4664,11 @@ describe('useCanvasOperations', () => {
 
 		it('should not copy a selection that contains a restricted node type', async () => {
 			const nodes = buildImportNodes();
+			nodes[1].type = 'n8n-nodes-base.slack';
 			workflowDocumentStoreInstance.allNodes = nodes;
 			vi.spyOn(workflowDocumentStoreInstance, 'getNodesByIds').mockReturnValue(nodes);
 			mockedStore(useTypeAvailabilityPoliciesStore).isNodeTypeAvailable.mockImplementation(
-				(name) => name !== nodes[1].type,
+				(name) => name !== 'n8n-nodes-base.slack',
 			);
 
 			const { copyNodes } = useCanvasOperations();

@@ -4,6 +4,7 @@ import { isCommunityPackageName } from 'n8n-workflow';
 import type { CanvasNodeData } from '../canvas.types';
 import { CanvasNodeRenderType, CanvasConnectionMode } from '../canvas.types';
 import { useNodeTypesStore } from '@/app/stores/nodeTypes.store';
+import { useTypeAvailabilityPoliciesStore } from '@n8n/frontend-module-type-availability-policies';
 
 export function useCanvasNode() {
 	const node = inject(CanvasNodeKey);
@@ -35,7 +36,6 @@ export function useCanvasNode() {
 
 	const subtitle = computed(() => data.value.subtitle);
 	const name = computed(() => data.value.name);
-	const type = computed(() => data.value.type);
 	const connections = computed(() => data.value.connections);
 
 	const isDisabled = computed(() => data.value.disabled);
@@ -67,11 +67,16 @@ export function useCanvasNode() {
 			!useNodeTypesStore().getIsNodeInstalled(data.value.type),
 	);
 
+	const typeAvailability = computed(() =>
+		useTypeAvailabilityPoliciesStore().getNodeTypeAvailability(data.value.type),
+	);
+	const isRestricted = computed(() => typeAvailability.value?.available === false);
+	const restrictionScope = computed(() => typeAvailability.value?.scope);
+
 	return {
 		node,
 		id,
 		name,
-		type,
 		label,
 		subtitle,
 		connections,
@@ -91,5 +96,7 @@ export function useCanvasNode() {
 		render,
 		eventBus,
 		isNotInstalledCommunityNode,
+		isRestricted,
+		restrictionScope,
 	};
 }

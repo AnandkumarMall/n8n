@@ -3494,11 +3494,6 @@ export function useCanvasOperations() {
 		return result.nodes?.map((node) => node.id).filter(isPresent) ?? [];
 	}
 
-	/**
-	 * Copies the nodes to the clipboard. Returns false, and copies nothing, when the selection
-	 * holds a node whose type a type availability policy blocks: a copy is one more way to
-	 * spread that type, next to duplicate and paste.
-	 */
 	async function copyNodes(ids: string[]): Promise<boolean> {
 		const nodes = workflowDocumentStore.value.getNodesByIds(ids);
 		if (nodes.some((node) => !typeAvailabilityPoliciesStore.isNodeTypeAvailable(node.type))) {

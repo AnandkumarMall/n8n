@@ -146,8 +146,6 @@ export function useContextMenuItems(
 		return nodeType.maxNodes === undefined || sameTypeNodes.length < nodeType.maxNodes;
 	};
 
-	// A type blocked by a type availability policy: the node stays on the canvas so the
-	// builder can replace it, but nothing may run it, pin it, copy it or make more of it.
 	const isRestricted = (node: INode): boolean =>
 		!typeAvailabilityPoliciesStore.isNodeTypeAvailable(node.type);
 

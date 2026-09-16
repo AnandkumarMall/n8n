@@ -1771,8 +1771,6 @@ watch([() => route.name, () => route.params.workflowId], () => {
 	initializeRoute();
 });
 
-// Canvas nodes read their type's restriction state from the type availability store, which
-// is scoped to the project that owns the workflow (the target project for a new workflow).
 const workflowProjectId = computed(
 	() =>
 		workflowDocumentStore?.value?.homeProject?.id ??

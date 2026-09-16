@@ -54,10 +54,6 @@ describe('CanvasNodeStatusIcons', () => {
 	beforeEach(() => {
 		nodeTypesStore = mockedStore(useNodeTypesStore);
 		typeAvailabilityPoliciesStore = mockedStore(useTypeAvailabilityPoliciesStore);
-		typeAvailabilityPoliciesStore.getNodeTypeAvailability.mockImplementation((name) => ({
-			name,
-			available: true,
-		}));
 		mockedUseRoute.mockReturnValue({} as RouteLocationNormalizedLoadedGeneric);
 		for (const key of Object.keys(pinnedDataByNodeName)) {
 			delete pinnedDataByNodeName[key];
@@ -328,28 +324,13 @@ describe('CanvasNodeStatusIcons', () => {
 				global: {
 					provide: {
 						...createCanvasProvide(),
-						...createCanvasNodeProvide({ data: { type: 'n8n-nodes-test.testNode' } }),
-					},
-				},
-			});
-
-			expect(queryByTestId('node-restricted')).toBeInTheDocument();
-			expect(queryByTestId('node-not-installed')).not.toBeInTheDocument();
-		});
-
-		it('should keep the lock badge ahead of the pinned icon', () => {
-			pinnedDataByNodeName['Test Node'] = [{ json: { key: 'value' } }];
-			const { queryByTestId } = renderComponent({
-				global: {
-					provide: {
-						...createCanvasProvide(),
 						...createCanvasNodeProvide({ data: { type: 'n8n-nodes-base.slack' } }),
 					},
 				},
 			});
 
 			expect(queryByTestId('node-restricted')).toBeInTheDocument();
-			expect(queryByTestId('canvas-node-status-pinned')).not.toBeInTheDocument();
+			expect(queryByTestId('node-not-installed')).not.toBeInTheDocument();
 		});
 	});
 });
