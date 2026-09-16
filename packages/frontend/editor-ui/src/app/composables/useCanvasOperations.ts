@@ -3496,9 +3496,10 @@ export function useCanvasOperations() {
 
 	async function copyNodes(ids: string[]): Promise<boolean> {
 		const nodes = workflowDocumentStore.value.getNodesByIds(ids);
-		if (nodes.some((node) => !typeAvailabilityPoliciesStore.isNodeTypeAvailable(node.type))) {
-			return false;
-		}
+		const hasRestrictedNode = nodes.some(
+			(node) => !typeAvailabilityPoliciesStore.isNodeTypeAvailable(node.type),
+		);
+		if (hasRestrictedNode) return false;
 
 		const workflowData = deepCopy(getNodesToSave(nodes));
 
@@ -3519,9 +3520,9 @@ export function useCanvasOperations() {
 	}
 
 	async function cutNodes(ids: string[]) {
-		if (await copyNodes(ids)) {
-			deleteNodes(ids);
-		}
+		if (!(await copyNodes(ids))) return;
+
+		deleteNodes(ids);
 	}
 
 	async function openExecution(executionId: string, nodeId?: string) {

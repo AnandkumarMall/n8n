@@ -1781,7 +1781,9 @@ const workflowProjectId = computed(
 watch(
 	workflowProjectId,
 	(projectId) => {
-		if (projectId) void typeAvailabilityPoliciesStore.fetchForProject(projectId);
+		if (!projectId) return;
+
+		void typeAvailabilityPoliciesStore.fetchForProject(projectId);
 	},
 	{ immediate: true },
 );
