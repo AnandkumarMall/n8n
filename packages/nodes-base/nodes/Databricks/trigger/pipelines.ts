@@ -15,7 +15,7 @@ export const PIPELINES_SEARCH_MAX_PAGES = 10;
 
 type PipelineSummary = { pipeline_id: string; name?: string };
 
-type PipelinesListResponse = { statuses?: unknown[]; next_page_token?: string };
+type PipelinesListResponse = { statuses?: unknown[]; next_page_token?: string | null };
 
 function isPipelineSummary(value: unknown): value is PipelineSummary {
 	return (
@@ -29,7 +29,9 @@ function isPipelinesListResponse(value: unknown): value is PipelinesListResponse
 	return (
 		isRecord(value) &&
 		(value.statuses === undefined || Array.isArray(value.statuses)) &&
-		(value.next_page_token === undefined || typeof value.next_page_token === 'string')
+		(value.next_page_token === undefined ||
+			value.next_page_token === null ||
+			typeof value.next_page_token === 'string')
 	);
 }
 
