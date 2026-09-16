@@ -81,6 +81,14 @@ const failedEvent = progressEvent('FAILED', FAILED_AT, FAILED_UPDATE_ID, {
 				error_class: 'PYTHON.EXCEPTION',
 				sql_state: 'P0001',
 				message: TRACEBACK,
+				stack: [
+					{
+						declaring_class: 'n8n_spike_table',
+						method_name: 'n8n_spike_table',
+						file_name: 'n8n-spike-dlt-notebook',
+						line_number: 7,
+					},
+				],
 			},
 		],
 	},
@@ -114,16 +122,38 @@ const simplifiedItem = (event: string, body: IDataObject, updateId = UPDATE_ID) 
 		...body,
 	},
 });
-const startedItem = simplifiedItem('updateStarted', { timing: { startedAt: RUNNING_AT } });
+const startedItem = simplifiedItem('updateStarted', {
+	timing: { startedAt: RUNNING_AT, runningAt: RUNNING_AT },
+});
 const completedResult = { state: 'COMPLETED', message: 'Update 01ee1d is COMPLETED.' };
 const completedItem = simplifiedItem('updateCompleted', {
 	result: completedResult,
-	timing: { startedAt: RUNNING_AT, endedAt: COMPLETED_AT, durationMs: COMPLETED_MS - RUNNING_MS },
+	timing: {
+		startedAt: RUNNING_AT,
+		runningAt: RUNNING_AT,
+		endedAt: COMPLETED_AT,
+		durationMs: COMPLETED_MS - RUNNING_MS,
+	},
 });
 const failedResult = {
 	state: 'FAILED',
 	message: FAILURE_MESSAGE,
-	errors: [{ type: 'Exception', code: 'PYTHON.EXCEPTION', sqlState: 'P0001', message: TRACEBACK }],
+	errors: [
+		{
+			type: 'Exception',
+			code: 'PYTHON.EXCEPTION',
+			sqlState: 'P0001',
+			message: TRACEBACK,
+			stack: [
+				{
+					class: 'n8n_spike_table',
+					method: 'n8n_spike_table',
+					file: 'n8n-spike-dlt-notebook',
+					line: 7,
+				},
+			],
+		},
+	],
 };
 const failedItem = simplifiedItem(
 	'updateFailed',
@@ -136,7 +166,12 @@ const emitted = (event: string, updateId = UPDATE_ID) => ({
 	update: expect.objectContaining({ id: updateId }),
 });
 
-const tracked = (startedMs?: number, endedMs?: number) => ({ startedMs, endedMs });
+const tracked = (startedMs?: number, endedMs?: number, runningMs?: number) => ({
+	startedMs,
+	runningMs,
+	endedMs,
+});
+const running = (startedMs: number, endedMs?: number) => tracked(startedMs, endedMs, startedMs);
 
 const watchingState = (updates: IDataObject = {}, cursorMs = CURSOR_MS): IDataObject => ({
 	pipelineId: PIPELINE_ID,
@@ -316,15 +351,25 @@ describe('pollPipelineUpdateEvents', () => {
 		it.each([...IN_FLIGHT_STATES, 'SOME_FUTURE_STATE'])(
 			'treats %s as a started update',
 			async (state) => {
+				const runningMs = state === 'RUNNING' ? RUNNING_MS : undefined;
 				const { staticData, pollWith } = createContext({
 					events: ALL_EVENTS,
 					staticData: watchingState(),
 				});
 
 				await expect(pollWith([progressEvent(state, RUNNING_AT)])).resolves.toEqual([
-					[startedItem],
+					[
+						simplifiedItem('updateStarted', {
+							timing: {
+								startedAt: RUNNING_AT,
+								runningAt: runningMs === undefined ? undefined : RUNNING_AT,
+							},
+						}),
+					],
 				]);
-				expect(staticData).toEqual(watchingState({ [UPDATE_ID]: tracked(RUNNING_MS) }, RUNNING_MS));
+				expect(staticData).toEqual(
+					watchingState({ [UPDATE_ID]: tracked(RUNNING_MS, undefined, runningMs) }, RUNNING_MS),
+				);
 			},
 		);
 
@@ -338,6 +383,20 @@ describe('pollPipelineUpdateEvents', () => {
 			[
 				'an exception with only a message',
 				{ exceptions: [{ message: 'boom' }] },
+				{ state: 'FAILED', message: FAILURE_MESSAGE, errors: [{ message: 'boom' }] },
+			],
+			[
+				'a frame with only a line number',
+				{ exceptions: [{ message: 'boom', stack: [{ line_number: 3 }] }] },
+				{
+					state: 'FAILED',
+					message: FAILURE_MESSAGE,
+					errors: [{ message: 'boom', stack: [{ line: 3 }] }],
+				},
+			],
+			[
+				'an empty stack',
+				{ exceptions: [{ message: 'boom', stack: [] }] },
 				{ state: 'FAILED', message: FAILURE_MESSAGE, errors: [{ message: 'boom' }] },
 			],
 		])('simplifies the result of a failure with %s', async (_label, error, result) => {
@@ -417,7 +476,7 @@ describe('pollPipelineUpdateEvents', () => {
 			const { staticData, pollWith } = createContext({ staticData: watchingState() });
 
 			await expect(pollWith([runningEvent])).resolves.toBeNull();
-			expect(staticData).toEqual(watchingState({ [UPDATE_ID]: tracked(RUNNING_MS) }, RUNNING_MS));
+			expect(staticData).toEqual(watchingState({ [UPDATE_ID]: running(RUNNING_MS) }, RUNNING_MS));
 		});
 
 		it('emits the start, then the completion with its duration, then nothing on a repeat', async () => {
@@ -430,7 +489,7 @@ describe('pollPipelineUpdateEvents', () => {
 
 			await expect(pollWith([completedEvent])).resolves.toEqual([[completedItem]]);
 			expect(staticData).toEqual(
-				watchingState({ [UPDATE_ID]: tracked(RUNNING_MS, COMPLETED_MS) }, COMPLETED_MS),
+				watchingState({ [UPDATE_ID]: running(RUNNING_MS, COMPLETED_MS) }, COMPLETED_MS),
 			);
 
 			await expect(pollWith([runningEvent, completedEvent])).resolves.toBeNull();
@@ -477,8 +536,49 @@ describe('pollPipelineUpdateEvents', () => {
 				pollWith([progressEvent('WAITING_FOR_RESOURCES', queuedAt), runningEvent]),
 			).resolves.toEqual([[simplifiedItem('updateStarted', { timing: { startedAt: queuedAt } })]]);
 			expect(staticData).toEqual(
-				watchingState({ [UPDATE_ID]: tracked(RUNNING_MS - 30_000) }, RUNNING_MS),
+				watchingState(
+					{ [UPDATE_ID]: tracked(RUNNING_MS - 30_000, undefined, RUNNING_MS) },
+					RUNNING_MS,
+				),
 			);
+		});
+
+		it('measures the duration from the RUNNING event and keeps the earlier start', async () => {
+			const queuedAt = toIso(RUNNING_MS - 30_000);
+			const { pollWith } = createContext({ staticData: watchingState() });
+
+			await expect(
+				pollWith([progressEvent('WAITING_FOR_RESOURCES', queuedAt), runningEvent]),
+			).resolves.toBeNull();
+			await expect(pollWith([completedEvent])).resolves.toEqual([
+				[
+					simplifiedItem('updateCompleted', {
+						result: completedResult,
+						timing: {
+							startedAt: queuedAt,
+							runningAt: RUNNING_AT,
+							endedAt: COMPLETED_AT,
+							durationMs: COMPLETED_MS - RUNNING_MS,
+						},
+					}),
+				],
+			]);
+		});
+
+		it('reports no duration when it never saw the RUNNING event', async () => {
+			const queuedMs = RUNNING_MS - 30_000;
+			const { pollWith } = createContext({
+				staticData: watchingState({ [UPDATE_ID]: tracked(queuedMs) }),
+			});
+
+			await expect(pollWith([completedEvent])).resolves.toEqual([
+				[
+					simplifiedItem('updateCompleted', {
+						result: completedResult,
+						timing: { startedAt: toIso(queuedMs), endedAt: COMPLETED_AT },
+					}),
+				],
+			]);
 		});
 
 		it('follows two interleaved updates in time order', async () => {
@@ -531,7 +631,7 @@ describe('pollPipelineUpdateEvents', () => {
 
 			await expect(pollWith([runningEvent, flowEvent(toIso(laterMs))])).resolves.toHaveLength(1);
 
-			expect(staticData).toEqual(watchingState({ [UPDATE_ID]: tracked(RUNNING_MS) }, laterMs));
+			expect(staticData).toEqual(watchingState({ [UPDATE_ID]: running(RUNNING_MS) }, laterMs));
 		});
 
 		it('keeps the cursor when the poll lists no events', async () => {
@@ -554,7 +654,7 @@ describe('pollPipelineUpdateEvents', () => {
 			await expect(pollWith([progressEvent('RUNNING', toIso(t))])).resolves.toBeNull();
 
 			expect(staticData).toEqual(
-				watchingState({ [OTHER_UPDATE_ID]: tracked(oldStart), [UPDATE_ID]: tracked(t) }, t),
+				watchingState({ [OTHER_UPDATE_ID]: tracked(oldStart), [UPDATE_ID]: running(t) }, t),
 			);
 		});
 
@@ -567,7 +667,7 @@ describe('pollPipelineUpdateEvents', () => {
 
 			expect(staticData).toEqual(
 				watchingState(
-					{ [FAILED_UPDATE_ID]: tracked(undefined, CURSOR_MS), [UPDATE_ID]: tracked(RUNNING_MS) },
+					{ [FAILED_UPDATE_ID]: tracked(undefined, CURSOR_MS), [UPDATE_ID]: running(RUNNING_MS) },
 					RUNNING_MS,
 				),
 			);
@@ -586,7 +686,7 @@ describe('pollPipelineUpdateEvents', () => {
 			await expect(pollWith([runningEvent])).resolves.toBeNull();
 
 			expect(staticData).toEqual(
-				watchingState({ ...kept, [UPDATE_ID]: tracked(RUNNING_MS) }, RUNNING_MS),
+				watchingState({ ...kept, [UPDATE_ID]: running(RUNNING_MS) }, RUNNING_MS),
 			);
 		});
 
@@ -601,7 +701,7 @@ describe('pollPipelineUpdateEvents', () => {
 				await expect(poll()).resolves.toEqual([[startedItem]]);
 
 				expect(api).toHaveBeenCalledTimes(DEFAULT_MAX_PAGES);
-				expect(staticData).toEqual(watchingState({ [UPDATE_ID]: tracked(RUNNING_MS) }, RUNNING_MS));
+				expect(staticData).toEqual(watchingState({ [UPDATE_ID]: running(RUNNING_MS) }, RUNNING_MS));
 				expect(context.logger.info).toHaveBeenCalledTimes(1);
 				expect(context.logger.info).toHaveBeenCalledWith(
 					expect.stringContaining(`pipeline ${PIPELINE_ID} since ${toIso(FLOOR_MS)}`),
@@ -630,7 +730,7 @@ describe('pollPipelineUpdateEvents', () => {
 				await expect(poll()).resolves.toEqual([[startedItem]]);
 
 				expect(api).toHaveBeenCalledTimes(1);
-				expect(staticData).toEqual(watchingState({ [UPDATE_ID]: tracked(RUNNING_MS) }, RUNNING_MS));
+				expect(staticData).toEqual(watchingState({ [UPDATE_ID]: running(RUNNING_MS) }, RUNNING_MS));
 				expect(context.logger.info).toHaveBeenCalledTimes(1);
 			});
 		});
