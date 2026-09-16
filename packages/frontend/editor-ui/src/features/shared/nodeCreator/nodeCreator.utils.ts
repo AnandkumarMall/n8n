@@ -256,6 +256,76 @@ export function searchNodes(
 export function flattenCreateElements(items: INodeCreateElement[]): INodeCreateElement[] {
 	return items.map((item) => (item.type === 'section' ? item.children : item)).flat();
 }
+type IsRestricted = (nodeTypeName: string) => boolean;
+
+/**
+ * Browse lists: drop restricted nodes and any section that ends up empty.
+ * Returns the same array reference when nothing is restricted, so the feature-off
+ * path renders the identical tree.
+ */
+export function withoutRestrictedNodes(
+	items: INodeCreateElement[],
+	isRestricted: IsRestricted,
+): INodeCreateElement[] {
+	let changed = false;
+	const result: INodeCreateElement[] = [];
+
+	for (const item of items) {
+		if (item.type === 'node' && isRestricted(item.key)) {
+			changed = true;
+			continue;
+		}
+
+		if (item.type === 'section') {
+			const children = withoutRestrictedNodes(item.children, isRestricted);
+			if (children !== item.children) {
+				changed = true;
+				if (children.length > 0) result.push({ ...item, children });
+				continue;
+			}
+		}
+
+		result.push(item);
+	}
+
+	return changed ? result : items;
+}
+
+/**
+ * Search lists: keep restricted nodes findable, but after every usable match.
+ * Stable: both partitions keep their rank order. Sections stay in place and sink
+ * their own children. Same array reference when nothing is restricted.
+ */
+export function sinkRestrictedNodesLast(
+	items: INodeCreateElement[],
+	isRestricted: IsRestricted,
+): INodeCreateElement[] {
+	let changed = false;
+	const available: INodeCreateElement[] = [];
+	const restricted: INodeCreateElement[] = [];
+
+	for (const item of items) {
+		if (item.type === 'node' && isRestricted(item.key)) {
+			changed = true;
+			restricted.push(item);
+			continue;
+		}
+
+		if (item.type === 'section') {
+			const children = sinkRestrictedNodesLast(item.children, isRestricted);
+			if (children !== item.children) {
+				changed = true;
+				available.push({ ...item, children });
+				continue;
+			}
+		}
+
+		available.push(item);
+	}
+
+	return changed ? [...available, ...restricted] : items;
+}
+
 export function isAINode(node: INodeCreateElement) {
 	const isNode = node.type === 'node';
 	if (!isNode) return false;

@@ -15,6 +15,23 @@ vi.mock('@/app/composables/useExternalHooks', () => ({
 	useExternalHooks: () => ({ run: vi.fn().mockResolvedValue(undefined) }),
 }));
 
+const mockRestrictedNodeTypes = vi.hoisted(() => new Set<string>());
+vi.mock('@n8n/frontend-module-type-availability-policies', async (importOriginal) => {
+	const { computed } = await import('vue');
+	return {
+		...(await importOriginal<typeof import('@n8n/frontend-module-type-availability-policies')>()),
+		useNodeTypeRestrictions: () => ({
+			isEnabled: computed(() => mockRestrictedNodeTypes.size > 0),
+			loadedProjectId: computed(() => 'project-1'),
+			isNodeTypeRestricted: (name: string) => mockRestrictedNodeTypes.has(name),
+			getNodeTypeRestriction: (name: string) =>
+				mockRestrictedNodeTypes.has(name)
+					? { name, available: false, scope: 'instance' }
+					: undefined,
+		}),
+	};
+});
+
 vi.mock('vue-router', () => ({
 	useRoute: vi.fn(() => ({ query: {}, params: {} })),
 	useRouter: vi.fn(),
@@ -48,6 +65,7 @@ describe('NodesListPanel', () => {
 	// Drain it while the document still exists — a timer surviving the last test
 	// fires after jsdom teardown and fails the run with an unhandled error.
 	afterEach(async () => {
+		mockRestrictedNodeTypes.clear();
 		await new Promise((resolve) => setTimeout(resolve, 0));
 	});
 
@@ -662,6 +680,66 @@ describe('NodesListPanel', () => {
 
 			// Context should still be 'replacement' after search
 			expect(nodeCreatorStore.openingContext).toBe('replacement');
+		});
+	});
+
+	describe('restricted node types', () => {
+		const triggerNodes = [...Array(9).keys()].map(
+			(n) =>
+				mockSimplifiedNodeType({
+					name: `Trigger Node ${n}`,
+					displayName: `Trigger Node ${n}`,
+					group: ['trigger'],
+				}) as INodeTypeDescription,
+		);
+
+		function renderTriggerView() {
+			const { container } = getWrapperComponent(() => {
+				const { setMergeNodes } = useNodeCreatorStore();
+				setMergeNodes([...triggerNodes]);
+				return {};
+			});
+			return container;
+		}
+
+		it('hides a restricted type while browsing', async () => {
+			mockRestrictedNodeTypes.add('Trigger Node 3');
+			renderTriggerView();
+			await nextTick();
+
+			screen.getByText('On app event').click();
+			await nextTick();
+
+			expect(screen.queryAllByTestId('item-iterator-item')).toHaveLength(8);
+			expect(screen.queryByText('Trigger Node 3')).not.toBeInTheDocument();
+		});
+
+		it('shows a restricted type last when searched for', async () => {
+			vi.useFakeTimers();
+			try {
+				mockRestrictedNodeTypes.add('Trigger Node 3');
+				renderTriggerView();
+				await nextTick();
+
+				screen.getByText('On app event').click();
+				await nextTick();
+
+				await fireEvent.input(screen.getByTestId('node-creator-search-bar'), {
+					target: { value: 'Trigger Node' },
+				});
+				await vi.advanceTimersByTimeAsync(DEBOUNCE_TIME.INPUT.SEARCH + 1);
+				await nextTick();
+
+				const items = screen.getAllByTestId('item-iterator-item');
+				expect(items).toHaveLength(9);
+				expect(items[items.length - 1]).toHaveTextContent('Trigger Node 3');
+				expect(
+					items[items.length - 1].querySelector('[data-test-id="node-creator-restricted-item"]'),
+				).toBeInTheDocument();
+				expect(screen.getAllByTestId('node-creator-restricted-item')).toHaveLength(1);
+			} finally {
+				vi.useRealTimers();
+			}
 		});
 	});
 });

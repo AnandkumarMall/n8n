@@ -34,6 +34,7 @@ import {
 	getRootSearchCallouts,
 	shouldShowCommunityNodeDetails,
 	getHumanInTheLoopActions,
+	sinkRestrictedNodesLast,
 } from '../../nodeCreator.utils';
 import { useViewStacks } from '../../composables/useViewStacks';
 import { useKeyboardNavigation } from '../../composables/useKeyboardNavigation';
@@ -53,6 +54,7 @@ import { type INodeParameters, isCommunityPackageName } from 'n8n-workflow';
 import { useNodeTypesStore } from '@/app/stores/nodeTypes.store';
 import { useCalloutHelpers } from '@/app/composables/useCalloutHelpers';
 import { injectWorkflowDocumentStore } from '@/app/stores/workflowDocument.store';
+import { useNodeTypeRestrictions } from '@n8n/frontend-module-type-availability-policies';
 
 export interface Props {
 	rootView: 'trigger' | 'action';
@@ -71,6 +73,7 @@ const { pushViewStack, popViewStack, isAiSubcategoryView, isHitlSubcategoryView 
 const { setAddedNodeActionParameters, nodeCreateElementToNodeTypeSelectedPayload } = useActions();
 
 const { registerKeyHook } = useKeyboardNavigation();
+const { isNodeTypeRestricted, loadedProjectId } = useNodeTypeRestrictions();
 
 const activeViewStack = computed(() => useViewStacks().activeViewStack);
 const isMcpCategory = computed(() => activeViewStack.value.subcategory === AI_CATEGORY_MCP_NODES);
@@ -80,7 +83,7 @@ const workflowDocumentStore = injectWorkflowDocumentStore();
 const communityNodesAndActions = computed(() => useNodeTypesStore().communityNodesAndActions);
 
 const moreFromCommunity = computed(() => {
-	return filterAndSearchNodes(
+	const hits = filterAndSearchNodes(
 		communityNodesAndActions.value.mergedNodes,
 		activeViewStack.value.search ?? '',
 		{
@@ -89,6 +92,7 @@ const moreFromCommunity = computed(() => {
 			aiConnectionType: activeViewStack.value.connectionType,
 		},
 	);
+	return sinkRestrictedNodesLast(hits, isNodeTypeRestricted);
 });
 
 const isSearchResultEmpty = computed(() => {
@@ -120,6 +124,10 @@ function getFilteredActions(
 }
 
 function onSelected(item: INodeCreateElement) {
+	// Every insert path ends here, including Enter/ArrowRight via onKeySelect, so this
+	// one check is what keeps a restricted type off the canvas.
+	if (item.type === 'node' && isNodeTypeRestricted(item.key)) return;
+
 	if (item.type === 'subcategory') {
 		const subcategoryKey = camelCase(item.properties.title);
 		const title = i18n.baseText(`nodeCreator.subcategoryNames.${subcategoryKey}` as BaseTextKey);
@@ -368,7 +376,7 @@ registerKeyHook('MainViewArrowLeft', {
 
 		<!-- Main Node Items -->
 		<ItemsRenderer
-			v-memo="[activeViewStack.search]"
+			v-memo="[activeViewStack.search, loadedProjectId]"
 			:elements="activeViewStack.items"
 			:class="[$style.items, { [$style.emptyItems]: isSearchResultEmpty && !isMcpCategory }]"
 			@selected="onSelected"

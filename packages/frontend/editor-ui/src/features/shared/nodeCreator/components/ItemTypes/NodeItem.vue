@@ -9,7 +9,7 @@ import {
 	MESSAGE_AN_AGENT_NODE_TYPE,
 } from '@/app/constants';
 import { COMMUNITY_NODES_INSTALLATION_DOCS_URL } from '@/features/settings/communityNodes/communityNodes.constants';
-import { computed, ref } from 'vue';
+import { computed, ref, type ComponentPublicInstance } from 'vue';
 
 import NodeIcon from '@/app/components/NodeIcon.vue';
 import { getNodeIconSize } from '@/app/utils/nodeIcon';
@@ -29,7 +29,11 @@ import {
 	shouldShowCommunityNodeDetails,
 } from '../../nodeCreator.utils';
 
-import { N8nIcon, N8nNodeCreatorNode, N8nTooltip } from '@n8n/design-system';
+import { N8nIcon, N8nNodeCreatorNode, N8nPopover, N8nTooltip } from '@n8n/design-system';
+import {
+	NodeTypeRestrictedPopover,
+	useNodeTypeRestrictions,
+} from '@n8n/frontend-module-type-availability-policies';
 export interface Props {
 	nodeType: SimplifiedNodeType;
 	subcategory?: string;
@@ -51,6 +55,18 @@ const { isSubNodeType } = useNodeType({
 	nodeType: props.nodeType,
 });
 const nodeTypesStore = useNodeTypesStore();
+const { getNodeTypeRestriction } = useNodeTypeRestrictions();
+
+const restriction = computed(() => getNodeTypeRestriction(props.nodeType.name));
+// The popover is driven by the row, not the lock icon: a hovered row or the
+// keyboard-active row shows it, so mouse and keyboard users reach it the same way.
+const hovered = ref(false);
+const showRestrictionPopover = computed(
+	() => !!restriction.value && (hovered.value || props.active),
+);
+// The popover anchors to the whole row, so it opens beside the panel, not on top of the lock.
+const rowRef = ref<ComponentPublicInstance | null>(null);
+const rowElement = computed(() => (rowRef.value?.$el as HTMLElement | undefined) ?? undefined);
 
 const dragging = ref(false);
 const draggablePosition = ref({ x: -100, y: -100 });
@@ -78,6 +94,9 @@ const description = computed<string>(() => {
 });
 
 const showActionArrow = computed(() => {
+	// A restricted node opens nothing, so it gets the lock instead of the arrow.
+	if (restriction.value) return false;
+
 	if (shouldShowCommunityNodeDetails(isCommunityNode.value, activeViewStack)) {
 		return true;
 	}
@@ -97,9 +116,10 @@ const isSendAndWaitCategory = computed(
 		activeViewStack.subcategory === HITL_SUBCATEGORY ||
 		activeViewStack.rootView === HUMAN_IN_THE_LOOP_CATEGORY,
 );
-const dataTestId = computed(() =>
-	hasActions.value ? 'node-creator-action-item' : 'node-creator-node-item',
-);
+const dataTestId = computed(() => {
+	if (restriction.value) return 'node-creator-restricted-item';
+	return hasActions.value ? 'node-creator-action-item' : 'node-creator-node-item';
+});
 
 const hasActions = computed(() => {
 	return nodeActions.value.length > 1 && !activeViewStack.hideActions;
@@ -193,9 +213,11 @@ function onCommunityNodeTooltipClick(event: MouseEvent) {
 </script>
 
 <template>
-	<!-- Node Item is draggable only if it doesn't contain actions -->
+	<!-- Node Item is draggable only if it doesn't contain actions and isn't restricted -->
 	<N8nNodeCreatorNode
-		:draggable="!showActionArrow"
+		ref="rowRef"
+		:draggable="!restriction && !showActionArrow"
+		:disabled="!!restriction"
 		:class="$style.nodeItem"
 		:description="description"
 		:title="displayName"
@@ -207,6 +229,8 @@ function onCommunityNodeTooltipClick(event: MouseEvent) {
 		:is-new="showNewBadge"
 		@dragstart="onDragStart"
 		@dragend="onDragEnd"
+		@mouseenter="hovered = true"
+		@mouseleave="hovered = false"
 	>
 		<template #icon>
 			<div :class="$style.iconWrapper">
@@ -252,6 +276,29 @@ function onCommunityNodeTooltipClick(event: MouseEvent) {
 				</template>
 				<N8nIcon size="small" :class="$style.icon" icon="box" />
 			</N8nTooltip>
+		</template>
+		<template v-if="restriction" #trailing>
+			<N8nPopover
+				:open="showRestrictionPopover"
+				side="left"
+				align="center"
+				:side-offset="12"
+				:reference="rowElement"
+				:suppress-auto-focus="true"
+				width="254px"
+			>
+				<template #trigger>
+					<N8nIcon
+						icon="lock"
+						size="small"
+						:title="i18n.baseText('nodeTypeRestricted.lockIconTitle')"
+						data-test-id="node-creator-restricted-icon"
+					/>
+				</template>
+				<template #content>
+					<NodeTypeRestrictedPopover :node-display-name="displayName" :restriction="restriction" />
+				</template>
+			</N8nPopover>
 		</template>
 		<template #dragContent>
 			<div

@@ -11,6 +11,7 @@ import type { CommandGroup } from '../types';
 import { useSourceControlStore } from '@/features/integrations/sourceControl.ee/sourceControl.store';
 import { useWorkflowsStore } from '@/app/stores/workflows.store';
 import { injectWorkflowDocumentStore } from '@/app/stores/workflowDocument.store';
+import { useNodeTypeRestrictions } from '@n8n/frontend-module-type-availability-policies';
 import { useCollaborationStore } from '@/features/collaboration/collaboration/collaboration.store';
 import { getResourcePermissions } from '@n8n/permissions';
 import NodeIcon from '@/app/components/NodeIcon.vue';
@@ -39,6 +40,7 @@ export function useNodeCommands(options: {
 	const { generateMergedNodesAndActions } = useActionsGenerator();
 
 	const workflowDocumentStore = injectWorkflowDocumentStore();
+	const { isNodeTypeRestricted } = useNodeTypeRestrictions();
 
 	const isReadOnly = computed(
 		() => sourceControlStore.preferences.branchReadOnly || collaborationStore.shouldBeReadOnly,
@@ -56,7 +58,10 @@ export function useNodeCommands(options: {
 	const mergedNodes = computed(() => {
 		const httpOnlyCredentials = credentialsStore.httpOnlyCredentialTypes;
 		const nodeTypes = nodeTypesStore.visibleNodeTypes;
-		return generateMergedNodesAndActions(nodeTypes, httpOnlyCredentials).mergedNodes;
+		// The command bar has no room to explain a restriction, so it does not offer the node.
+		return generateMergedNodesAndActions(nodeTypes, httpOnlyCredentials).mergedNodes.filter(
+			(node) => !isNodeTypeRestricted(node.name),
+		);
 	});
 
 	const buildAddNodeCommand = (node: SimplifiedNodeType, isRoot: boolean): CommandBarItem => {

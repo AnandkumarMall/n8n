@@ -1,5 +1,7 @@
 import type { Pinia } from 'pinia';
 import { createPinia, setActivePinia } from 'pinia';
+import { screen } from '@testing-library/vue';
+import userEvent from '@testing-library/user-event';
 
 import {
 	AI_CATEGORY_OTHER_TOOLS,
@@ -29,6 +31,23 @@ const mockGetAddedNodesAndConnections = vi.fn<() => AddedNodesAndConnections>(()
 	nodes: [],
 	connections: [],
 }));
+
+const mockRestrictedNodeTypes = vi.hoisted(() => new Map<string, 'instance' | 'project'>());
+vi.mock('@n8n/frontend-module-type-availability-policies', async (importOriginal) => {
+	const { computed } = await import('vue');
+	return {
+		...(await importOriginal<typeof import('@n8n/frontend-module-type-availability-policies')>()),
+		useNodeTypeRestrictions: () => ({
+			isEnabled: computed(() => true),
+			loadedProjectId: computed(() => 'project-1'),
+			isNodeTypeRestricted: (name: string) => mockRestrictedNodeTypes.has(name),
+			getNodeTypeRestriction: (name: string) => {
+				const scope = mockRestrictedNodeTypes.get(name);
+				return scope ? { name, available: false, scope } : undefined;
+			},
+		}),
+	};
+});
 
 vi.mock('../../composables/useActions', () => ({
 	useActions: () => ({
@@ -62,6 +81,7 @@ describe('NodeItem', () => {
 		pinia = createPinia();
 		setActivePinia(pinia);
 		vi.clearAllMocks();
+		mockRestrictedNodeTypes.clear();
 		useViewStacks().resetViewStacks();
 	});
 
@@ -211,6 +231,54 @@ describe('NodeItem', () => {
 			});
 
 			expect(getDescription(container)).toBe('Interact with Anthropic AI models');
+		});
+	});
+
+	describe('restricted node type', () => {
+		const gmail = () =>
+			mockSimplifiedNodeType({
+				name: 'n8n-nodes-base.gmail',
+				displayName: 'Gmail',
+				group: ['output'],
+			});
+
+		it('is greyed, locked, not draggable and has no action arrow', () => {
+			mockRestrictedNodeTypes.set('n8n-nodes-base.gmail', 'instance');
+
+			const { container, getByTestId } = render({ pinia, props: { nodeType: gmail() } });
+
+			const row = getByTestId('node-creator-restricted-item');
+			expect(row.getAttribute('draggable')).toBe('false');
+			expect(row.className).toContain('disabled');
+			expect(getByTestId('node-creator-restricted-icon')).toBeInTheDocument();
+			expect(container.querySelector('[data-icon="arrow-right"]')).not.toBeInTheDocument();
+		});
+
+		it('explains an instance restriction on hover', async () => {
+			mockRestrictedNodeTypes.set('n8n-nodes-base.gmail', 'instance');
+
+			const { getByTestId } = render({ pinia, props: { nodeType: gmail() } });
+			expect(screen.queryByTestId('node-type-restricted-popover')).not.toBeInTheDocument();
+
+			await userEvent.hover(getByTestId('node-creator-restricted-item'));
+
+			expect(await screen.findByText('Restricted on this instance')).toBeInTheDocument();
+		});
+
+		it('explains a project restriction when the row is keyboard-active', async () => {
+			mockRestrictedNodeTypes.set('n8n-nodes-base.gmail', 'project');
+
+			render({ pinia, props: { nodeType: gmail(), active: true } });
+
+			expect(await screen.findByText('Restricted in this project')).toBeInTheDocument();
+		});
+
+		it('renders a normal row when the type is not restricted', () => {
+			const { container, queryByTestId } = render({ pinia, props: { nodeType: gmail() } });
+
+			expect(queryByTestId('node-creator-restricted-item')).not.toBeInTheDocument();
+			expect(queryByTestId('node-creator-restricted-icon')).not.toBeInTheDocument();
+			expect(container.querySelector('[draggable="true"]')).toBeInTheDocument();
 		});
 	});
 });

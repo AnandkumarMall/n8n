@@ -35,6 +35,8 @@ import {
 	extractAiGatewaySection,
 	finalizeItems,
 	flattenCreateElements,
+	sinkRestrictedNodesLast,
+	withoutRestrictedNodes,
 	groupItemsInSections,
 	isAINode,
 	nodeTypesToCreateElements,
@@ -73,6 +75,7 @@ import { getThemedValue } from '@/app/utils/nodeTypesUtils';
 
 import nodePopularity from 'virtual:node-popularity-data';
 import { injectWorkflowDocumentStore } from '@/app/stores/workflowDocument.store';
+import { useNodeTypeRestrictions } from '@n8n/frontend-module-type-availability-policies';
 
 export type NodeCreatorFilter = INodeFilter & {
 	conditions?: Array<(item: INodeCreateElement) => boolean>;
@@ -118,6 +121,7 @@ export const useViewStacks = defineStore('nodeCreatorViewStacks', () => {
 	const { getActiveItemIndex } = useKeyboardNavigation();
 	const i18n = useI18n();
 	const settingsStore = useSettingsStore();
+	const { isNodeTypeRestricted } = useNodeTypeRestrictions();
 
 	const viewStacks = ref<ViewStack[]>([]);
 
@@ -149,8 +153,10 @@ export const useViewStacks = defineStore('nodeCreatorViewStacks', () => {
 					popularity: nodePopularityMap,
 				}),
 			);
+			// The pinned client is read off baselineItems and skips the search results,
+			// so it needs its own restriction check; unpinned, it sinks with the rest.
 			const pinnedMcpClient =
-				stack.subcategory === AI_CATEGORY_MCP_NODES
+				stack.subcategory === AI_CATEGORY_MCP_NODES && !isNodeTypeRestricted(AI_MCP_TOOL_NODE_TYPE)
 					? stack.baselineItems?.find((item) => item.key === AI_MCP_TOOL_NODE_TYPE)
 					: undefined;
 			const filteredSearchResults = pinnedMcpClient
@@ -159,7 +165,10 @@ export const useViewStacks = defineStore('nodeCreatorViewStacks', () => {
 
 			const groupedNodes =
 				groupIfAiNodes(filteredSearchResults, stack, false) ?? filteredSearchResults;
-			const visibleNodes = pinnedMcpClient ? [pinnedMcpClient, ...groupedNodes] : groupedNodes;
+			const visibleNodes = sinkRestrictedNodesLast(
+				pinnedMcpClient ? [pinnedMcpClient, ...groupedNodes] : groupedNodes,
+				isNodeTypeRestricted,
+			);
 			// Set the active index to the second item if there's a section
 			// as the first item is collapsable
 			stack.activeIndex = visibleNodes.some((node) => node.type === 'section') ? 1 : 0;
@@ -167,15 +176,19 @@ export const useViewStacks = defineStore('nodeCreatorViewStacks', () => {
 			return visibleNodes;
 		}
 
+		// Browsing hides restricted types outright; search (above) keeps them findable.
+		// baselineItems itself stays unfiltered because it is also the search base.
+		const browseItems = withoutRestrictedNodes(stack.baselineItems, isNodeTypeRestricted);
+
 		// Surface n8n Connect-powered nodes in a dedicated section at the top,
 		// extracted before grouping so they don't also land in the AI sections
 		if (showsAiGatewaySection(stack)) {
-			const extracted = extractAiGatewaySection(stack.baselineItems);
+			const extracted = extractAiGatewaySection(browseItems);
 			if (extracted) {
 				return finalizeItems([extracted.section, ...groupIfAiNodes(extracted.rest, stack, true)]);
 			}
 		}
-		return finalizeItems(groupIfAiNodes(stack.baselineItems, stack, true));
+		return finalizeItems(groupIfAiNodes(browseItems, stack, true));
 	});
 
 	const activeViewStack = computed<ViewStack>(() => {
@@ -265,7 +278,7 @@ export const useViewStacks = defineStore('nodeCreatorViewStacks', () => {
 			return true;
 		});
 
-		return filteredSections;
+		return sinkRestrictedNodesLast(filteredSections, isNodeTypeRestricted);
 	});
 
 	const itemsBySubcategory = computed(() => subcategorizeItems(nodeCreatorStore.mergedNodes));

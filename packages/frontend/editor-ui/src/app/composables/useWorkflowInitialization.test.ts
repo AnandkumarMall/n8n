@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { ref, shallowRef, defineComponent, h } from 'vue';
+import { ref, shallowRef, defineComponent, h, nextTick } from 'vue';
 import { setActivePinia } from 'pinia';
 import { createTestingPinia } from '@pinia/testing';
 import { render } from '@testing-library/vue';
@@ -8,6 +8,7 @@ import { useWorkflowInitialization } from './useWorkflowInitialization';
 import { VIEWS } from '@/app/constants';
 import { WorkflowDocumentStoreKey } from '@/app/constants/injectionKeys';
 import { useProjectsStore } from '@/features/collaboration/projects/projects.store';
+import { useTypeAvailabilityPoliciesStore } from '@n8n/frontend-module-type-availability-policies';
 import type { Project } from '@/features/collaboration/projects/projects.types';
 import { mockedStore } from '@/__tests__/utils';
 import type { IWorkflowDb } from '@/Interface';
@@ -394,6 +395,50 @@ describe('useWorkflowInitialization', () => {
 			} as unknown as IWorkflowDb);
 
 			expect(mockWorkflowDocumentStore.setHomeProject).toHaveBeenCalledWith(homeProject);
+		});
+	});
+
+	describe('available types for the home project', () => {
+		type DocumentStore = typeof mockWorkflowDocumentStore;
+
+		function withHomeProject(id: string | null) {
+			return { ...mockWorkflowDocumentStore, homeProject: id ? { id } : null } as DocumentStore;
+		}
+
+		it('fetches available types when the workflow gets a home project', async () => {
+			const policiesStore = mockedStore(useTypeAvailabilityPoliciesStore);
+			const storeRef = shallowRef<DocumentStore | null>(null);
+			renderWithComposable(() => {}, storeRef);
+
+			expect(policiesStore.fetchForProject).not.toHaveBeenCalled();
+
+			storeRef.value = withHomeProject('proj-1');
+			await nextTick();
+
+			expect(policiesStore.fetchForProject).toHaveBeenCalledTimes(1);
+			expect(policiesStore.fetchForProject).toHaveBeenCalledWith('proj-1');
+		});
+
+		it('fetches again when the home project changes', async () => {
+			const policiesStore = mockedStore(useTypeAvailabilityPoliciesStore);
+			const storeRef = shallowRef<DocumentStore | null>(withHomeProject('proj-1'));
+			renderWithComposable(() => {}, storeRef);
+			await nextTick();
+
+			storeRef.value = withHomeProject('proj-2');
+			await nextTick();
+
+			expect(policiesStore.fetchForProject).toHaveBeenCalledTimes(2);
+			expect(policiesStore.fetchForProject).toHaveBeenLastCalledWith('proj-2');
+		});
+
+		it('does not fetch while the document store has no home project', async () => {
+			const policiesStore = mockedStore(useTypeAvailabilityPoliciesStore);
+			const storeRef = shallowRef<DocumentStore | null>(withHomeProject(null));
+			renderWithComposable(() => {}, storeRef);
+			await nextTick();
+
+			expect(policiesStore.fetchForProject).not.toHaveBeenCalled();
 		});
 	});
 });

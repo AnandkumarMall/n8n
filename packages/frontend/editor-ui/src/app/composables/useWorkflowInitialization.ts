@@ -1,4 +1,4 @@
-import { ref, computed } from 'vue';
+import { ref, computed, watch } from 'vue';
 import { type RouteRecordNameGeneric, useRoute, useRouter } from 'vue-router';
 import { useI18n } from '@n8n/i18n';
 import { safeParseWorkflowStructure, WorkflowStructureValidationError } from 'n8n-workflow';
@@ -17,6 +17,7 @@ import { useNodeTypesStore } from '@/app/stores/nodeTypes.store';
 import { useCredentialsStore } from '@/features/credentials/credentials.store';
 import { useEnvironmentsStore } from '@/features/settings/environments.ee/environments.store';
 import { useSettingsStore } from '@n8n/stores/settings.store';
+import { useTypeAvailabilityPoliciesStore } from '@n8n/frontend-module-type-availability-policies';
 import { useProjectsStore } from '@/features/collaboration/projects/projects.store';
 import { useHistoryStore } from '@/app/stores/history.store';
 import { useBuilderStore } from '@/features/ai/assistant/builder.store';
@@ -62,6 +63,18 @@ export function useWorkflowInitialization() {
 	const telemetry = useTelemetry();
 	const workflowId = useWorkflowId();
 	const currentWorkflowDocumentStore = injectStrict(WorkflowDocumentStoreKey);
+	const typeAvailabilityPoliciesStore = useTypeAvailabilityPoliciesStore();
+
+	// Every init path stamps the owning project on the document store, so one watcher
+	// covers new and existing workflows and project switches. The store no-ops when the
+	// module is off or the project is already loaded, and it never throws.
+	watch(
+		() => currentWorkflowDocumentStore.value?.homeProject?.id,
+		(projectId) => {
+			if (projectId) void typeAvailabilityPoliciesStore.fetchForProject(projectId);
+		},
+		{ immediate: true },
+	);
 
 	const DEMO_ROUTES: RouteRecordNameGeneric[] = [VIEWS.DEMO, VIEWS.DEMO_DIFF];
 

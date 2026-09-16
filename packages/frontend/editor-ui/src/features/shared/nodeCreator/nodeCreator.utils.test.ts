@@ -23,6 +23,8 @@ import {
 	nodeTypesToCreateElements,
 	mapToolSubcategoryIcon,
 	searchNodes,
+	sinkRestrictedNodesLast,
+	withoutRestrictedNodes,
 } from './nodeCreator.utils';
 import {
 	mockActionCreateElement,
@@ -1397,6 +1399,85 @@ describe('NodeCreator - utils', () => {
 
 		it('does not surface the rag starter callout unless it is enabled', () => {
 			expect(getRootSearchCallouts('rag', {}, [])).toEqual([]);
+		});
+	});
+});
+
+describe('restricted node helpers', () => {
+	const node = (key: string) => mockNodeCreateElement({ key });
+	const isRestricted = (name: string) => name.startsWith('blocked');
+
+	describe('withoutRestrictedNodes', () => {
+		it('returns the same array reference when nothing is restricted', () => {
+			const items = [node('a'), mockSectionCreateElement({ children: [node('b')] })];
+
+			expect(withoutRestrictedNodes(items, isRestricted)).toBe(items);
+		});
+
+		it('drops restricted nodes at the top level', () => {
+			const items = [node('a'), node('blocked-1'), node('c')];
+
+			expect(withoutRestrictedNodes(items, isRestricted).map((i) => i.key)).toEqual(['a', 'c']);
+		});
+
+		it('drops restricted nodes inside a section and keeps the section', () => {
+			const section = mockSectionCreateElement({ children: [node('a'), node('blocked-1')] });
+
+			const [result] = withoutRestrictedNodes([section], isRestricted);
+
+			expect(result.type).toBe('section');
+			expect((result as SectionCreateElement).children.map((c) => c.key)).toEqual(['a']);
+		});
+
+		it('drops a section whose every child is restricted', () => {
+			const section = mockSectionCreateElement({ children: [node('blocked-1')] });
+
+			expect(withoutRestrictedNodes([node('a'), section], isRestricted).map((i) => i.key)).toEqual([
+				'a',
+			]);
+		});
+
+		it('keeps an untouched section by reference', () => {
+			const section = mockSectionCreateElement({ children: [node('a')] });
+
+			const [result] = withoutRestrictedNodes([section, node('blocked-1')], isRestricted);
+
+			expect(result).toBe(section);
+		});
+	});
+
+	describe('sinkRestrictedNodesLast', () => {
+		it('returns the same array reference when nothing is restricted', () => {
+			const items = [node('a'), node('b')];
+
+			expect(sinkRestrictedNodesLast(items, isRestricted)).toBe(items);
+		});
+
+		it('moves restricted nodes after every available node and keeps both orders', () => {
+			const items = [node('blocked-1'), node('a'), node('blocked-2'), node('b')];
+
+			expect(sinkRestrictedNodesLast(items, isRestricted).map((i) => i.key)).toEqual([
+				'a',
+				'b',
+				'blocked-1',
+				'blocked-2',
+			]);
+		});
+
+		it('sinks inside a section and keeps the section in place', () => {
+			const section = mockSectionCreateElement({
+				key: 'section',
+				children: [node('blocked-1'), node('a')],
+			});
+			const items = [section, node('b'), node('blocked-2')];
+
+			const result = sinkRestrictedNodesLast(items, isRestricted);
+
+			expect(result.map((i) => i.key)).toEqual(['section', 'b', 'blocked-2']);
+			expect((result[0] as SectionCreateElement).children.map((c) => c.key)).toEqual([
+				'a',
+				'blocked-1',
+			]);
 		});
 	});
 });

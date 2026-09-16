@@ -51,6 +51,13 @@ vi.mock('@n8n/permissions', () => ({
 	getResourcePermissions: vi.fn(),
 }));
 
+const mockRestrictedNodeTypes = vi.hoisted(() => new Set<string>());
+vi.mock('@n8n/frontend-module-type-availability-policies', () => ({
+	useNodeTypeRestrictions: () => ({
+		isNodeTypeRestricted: (name: string) => mockRestrictedNodeTypes.has(name),
+	}),
+}));
+
 vi.mock('@n8n/i18n', async (importOriginal) => ({
 	...(await importOriginal()),
 	useI18n: () => ({
@@ -80,6 +87,7 @@ describe('useNodeCommands', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		mockRestrictedNodeTypes.clear();
 
 		setActivePinia(createTestingPinia({ stubActions: false }));
 
@@ -221,6 +229,26 @@ describe('useNodeCommands', () => {
 			expect(addCommand?.children?.[1].id).toBe('n8n-nodes-base.slack');
 
 			expect(mockGenerateMergedNodesAndActionsFn).toHaveBeenCalled();
+		});
+
+		it('should not offer a node type the policy restricts', () => {
+			mockGenerateMergedNodesAndActionsFn.mockReturnValue({
+				mergedNodes: [
+					createMockNodeType('n8n-nodes-base.httpRequest', 'HTTP Request'),
+					createMockNodeType('n8n-nodes-base.slack', 'Slack'),
+				],
+			});
+			mockRestrictedNodeTypes.add('n8n-nodes-base.slack');
+
+			const { commands } = useNodeCommands({
+				lastQuery: ref(''),
+				activeNodeId: ref(null),
+			});
+
+			const addCommand = commands.value.find((cmd) => cmd.id === 'add-node');
+			expect(addCommand?.children?.map((child) => child.id)).toEqual([
+				'n8n-nodes-base.httpRequest',
+			]);
 		});
 	});
 
