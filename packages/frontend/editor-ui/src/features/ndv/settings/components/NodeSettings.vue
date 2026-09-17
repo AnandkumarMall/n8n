@@ -31,10 +31,12 @@ import ExperimentalEmbeddedNdvHeader from '@/features/workflows/canvas/experimen
 import FreeAiCreditsCallout from '@/app/components/FreeAiCreditsCallout.vue';
 import NodeActionsList from '@/app/components/NodeActionsList.vue';
 import NodeSettingsInvalidNodeWarning from './NodeSettingsInvalidNodeWarning.vue';
+import NodeSettingsRestrictedCallout from './NodeSettingsRestrictedCallout.vue';
 import { useExternalHooks } from '@/app/composables/useExternalHooks';
 import { useInstalledCommunityPackage } from '@/features/settings/communityNodes/composables/useInstalledCommunityPackage';
 import { useNodeCredentialOptions } from '@/features/credentials/composables/useNodeCredentialOptions';
 import { useNodeHelpers } from '@/app/composables/useNodeHelpers';
+import { useNodeTypeRestriction } from '@n8n/frontend-module-type-availability-policies';
 import { useNodeSettingsParameters } from '@/features/ndv/settings/composables/useNodeSettingsParameters';
 import { useTelemetry } from '@n8n/composables/useTelemetry';
 import { importCurlEventBus } from '@/app/event-bus';
@@ -111,6 +113,7 @@ const emit = defineEmits<{
 	];
 	activate: [];
 	execute: [];
+	replaceNode: [nodeId: string];
 	captureWheelBody: [WheelEvent];
 	dblclickHeader: [MouseEvent];
 }>();
@@ -171,10 +174,14 @@ const hasForeignCredential = computed(() => props.foreignCredentials.length > 0)
 const isHomeProjectTeam = computed(
 	() => currentWorkflow.value?.homeProject?.type === ProjectTypes.Team,
 );
-const isReadOnly = computed(
-	() => props.readOnly || (hasForeignCredential.value && !isHomeProjectTeam.value),
-);
 const node = computed(() => props.activeNode ?? ndvStore.value.activeNode);
+const { isRestricted, restrictionScope } = useNodeTypeRestriction(() => node.value?.type);
+const isReadOnly = computed(
+	() =>
+		props.readOnly ||
+		isRestricted.value ||
+		(hasForeignCredential.value && !isHomeProjectTeam.value),
+);
 
 const nodeType = computed(() =>
 	node.value ? nodeTypesStore.getNodeType(node.value.type, node.value.typeVersion) : null,
@@ -638,6 +645,8 @@ function displayCredentials(credentialTypeDescription: INodeCredentialDescriptio
 }
 
 function handleSelectAction(params: INodeParameters) {
+	if (isReadOnly.value) return;
+
 	for (const [key, value] of Object.entries(params)) {
 		valueChanged({ name: `parameters.${key}`, value });
 	}
@@ -688,7 +697,9 @@ function handleSelectAction(params: INodeParameters) {
 			:node-name="node.name"
 			:node-type="nodeType"
 			:execute-button-tooltip="executeButtonTooltip"
-			:hide-execute="props.hideExecute || !isExecutable || blockUI || !node || !nodeValid"
+			:hide-execute="
+				props.hideExecute || isRestricted || !isExecutable || blockUI || !node || !nodeValid
+			"
 			:disable-execute="outputPanelEditMode.enabled && !isTriggerNode"
 			:hide-tabs="!nodeValid"
 			:hide-docs="props.hideDocs"
@@ -716,6 +727,13 @@ function handleSelectAction(params: INodeParameters) {
 			data-test-id="node-parameters"
 			@wheel.capture="emit('captureWheelBody', $event)"
 		>
+			<NodeSettingsRestrictedCallout
+				v-if="isRestricted"
+				:node-type-name="nodeType?.displayName ?? node.type"
+				:scope="restrictionScope"
+				:show-replace="!isEmbeddedInCanvas"
+				@replace-node="emit('replaceNode', node.id)"
+			/>
 			<N8nNotice
 				v-if="hasForeignCredential && !isHomeProjectTeam"
 				:content="

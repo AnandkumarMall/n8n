@@ -17,6 +17,7 @@ import { createComponentRenderer } from '@/__tests__/render';
 import { createTestNode, createTestWorkflow, defaultNodeDescriptions } from '@/__tests__/mocks';
 import { computed, shallowRef } from 'vue';
 import { WorkflowDocumentStoreKey, WorkflowIdKey } from '@/app/constants/injectionKeys';
+import { useTypeAvailabilityPoliciesStore } from '@n8n/frontend-module-type-availability-policies';
 
 vi.mock('vue-router', () => ({
 	useRouter: () => ({}),
@@ -67,8 +68,14 @@ describe('NodeDetailsView', () => {
 	const setNode = createTestNode({ name: 'Set', type: SET_NODE_TYPE });
 	const stickyNode = createTestNode({ name: 'Sticky', type: STICKY_NODE_TYPE });
 
-	const renderComponent = (props: { readOnly?: boolean; activeNodeName?: string | null } = {}) => {
-		const { activeNodeName = null, ...componentProps } = props;
+	const renderComponent = (
+		props: {
+			readOnly?: boolean;
+			activeNodeName?: string | null;
+			stubs?: Record<string, unknown>;
+		} = {},
+	) => {
+		const { activeNodeName = null, stubs = {}, ...componentProps } = props;
 
 		const ndvStore = useNDVStore(createWorkflowDocumentId(workflowId));
 		if (activeNodeName) {
@@ -99,6 +106,7 @@ describe('NodeDetailsView', () => {
 						emits: ['execute', 'activate'],
 					},
 					NodeSettings: { template: '<div data-test-id="node-settings"></div>' },
+					...stubs,
 				},
 			},
 		});
@@ -288,6 +296,59 @@ describe('NodeDetailsView', () => {
 
 			await waitFor(() => {
 				expect(emitted().renameNode).toEqual([['Renamed Trigger']]);
+			});
+		});
+	});
+
+	describe('restricted node type', () => {
+		const nodeSettingsStub = {
+			props: ['readOnly', 'executable', 'hideExecute'],
+			emits: ['replaceNode'],
+			template: `<div
+				data-test-id="node-settings"
+				:data-read-only="readOnly"
+				:data-executable="executable"
+				:data-hide-execute="hideExecute"
+				@click="$emit('replaceNode', 'node-id')"
+			></div>`,
+		};
+
+		beforeEach(() => {
+			const store = setupStore([manualTriggerNode, setNode]);
+			pinia = store.pinia;
+			workflowId = store.workflow.id;
+			workflowDocumentStoreRef = store.workflowDocumentStoreRef;
+			vi.spyOn(useTypeAvailabilityPoliciesStore(), 'getNodeTypeAvailability').mockImplementation(
+				(name) => ({ name, available: name !== SET_NODE_TYPE }),
+			);
+		});
+
+		test('locks the settings and hides execute for a restricted node', async () => {
+			const { getByTestId } = renderComponent({
+				activeNodeName: 'Set',
+				stubs: { NodeSettings: nodeSettingsStub },
+			});
+
+			await waitFor(() => {
+				const settings = getByTestId('node-settings');
+				expect(settings).toHaveAttribute('data-read-only', 'true');
+				expect(settings).toHaveAttribute('data-executable', 'false');
+				expect(settings).toHaveAttribute('data-hide-execute', 'true');
+			});
+		});
+
+		test('closes and re-emits the replace request', async () => {
+			const { getByTestId, emitted } = renderComponent({
+				activeNodeName: 'Set',
+				stubs: { NodeSettings: nodeSettingsStub },
+			});
+
+			await waitFor(() => expect(getByTestId('ndv')).toBeInTheDocument());
+			await userEvent.click(getByTestId('node-settings'));
+
+			await waitFor(() => {
+				expect(emitted('replaceNode')).toEqual([['node-id']]);
+				expect(useNDVStore(createWorkflowDocumentId(workflowId)).activeNodeName).toBeNull();
 			});
 		});
 	});
