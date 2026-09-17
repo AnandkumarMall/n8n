@@ -22,7 +22,9 @@ import {
 	DATABRICKS_CREDENTIAL_TYPE,
 	type DatabricksOAuth2Credential,
 } from '../../llms/LmChatDatabricks/token-provider';
-import { DatabricksVectorStore } from './DatabricksVectorStore';
+import { DatabricksVectorStore, type DatabricksIndexInfo } from './DatabricksVectorStore';
+
+const REQUEST_TIMEOUT_MS = 60_000;
 
 const databricksIndexRLC: INodeProperties = {
 	displayName: 'Index',
@@ -89,29 +91,56 @@ const sharedFields: INodeProperties[] = [
 				default: [],
 				typeOptions: columnTypeOptions,
 				description:
-					'Columns to store in document metadata. Defaults to all columns except the vector column. Choose from the list, or specify IDs using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
+					'Columns to store in document metadata. Defaults to all columns except the key, content and vector columns. Choose from the list, or specify IDs using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
 			},
 		],
 	},
 ];
 
+interface Run {
+	fetch: typeof fetch;
+	host: string;
+	/** Describe results of this run, keyed by index name */
+	indexes: Map<string, Promise<DatabricksIndexInfo>>;
+}
+
 // The class owns its HTTP calls, so the runtime and the column dropdown share
 // the token-refreshing fetch; the transport goes through the proxy-aware fetch
-async function databricksFetch(
-	ctx: DatabricksFetchContext,
-): Promise<{ fetch: typeof fetch; host: string }> {
+async function openRun(ctx: DatabricksFetchContext): Promise<Run> {
 	const credential = await ctx.getCredentials<DatabricksOAuth2Credential>(
 		DATABRICKS_CREDENTIAL_TYPE,
 	);
 	assertHttpsHost(ctx, credential.host);
 	const host = credential.host.replace(/\/$/, '');
 	const egressFilter = ctx.helpers.getSecureEgressFilter();
+	// ILoadOptionsFunctions has no cancel signal
+	const cancelSignal =
+		'getExecutionCancelSignal' in ctx ? ctx.getExecutionCancelSignal() : undefined;
 	const { fetch } = createDatabricksAuthFetch(ctx, credential, {
 		endpointUrl: host,
 		egressFilter,
-		baseFetch: async (input, init) => await proxyFetch({ input, init, egressFilter }),
+		baseFetch: async (input, init) =>
+			await proxyFetch({
+				input,
+				init: { ...init, signal: init?.signal ?? cancelSignal },
+				timeoutOptions: { headersTimeout: REQUEST_TIMEOUT_MS, bodyTimeout: REQUEST_TIMEOUT_MS },
+				egressFilter,
+			}),
 	});
-	return { fetch, host };
+	return { fetch, host, indexes: new Map() };
+}
+
+// One context object serves every item of an execute call and every tool call of a
+// supplyData closure, so the token mint and the describe GETs happen once per run
+const runs = new WeakMap<DatabricksFetchContext, Promise<Run>>();
+
+async function databricksFetch(ctx: DatabricksFetchContext): Promise<Run> {
+	let run = runs.get(ctx);
+	if (!run) {
+		run = openRun(ctx);
+		runs.set(ctx, run);
+	}
+	return await run;
 }
 
 async function createStore(
@@ -120,7 +149,7 @@ async function createStore(
 	itemIndex: number,
 	filter?: Record<string, unknown>,
 ): Promise<DatabricksVectorStore> {
-	const { fetch, host } = await databricksFetch(ctx);
+	const { fetch, host, indexes } = await databricksFetch(ctx);
 	const node = ctx.getNode();
 	const indexName = ctx.getNodeParameter('databricksIndex', itemIndex, '', { extractValue: true });
 	assertParamIsString('databricksIndex', indexName, node);
@@ -134,6 +163,12 @@ async function createStore(
 		node,
 	);
 
+	let index = indexes.get(indexName);
+	if (!index) {
+		index = DatabricksVectorStore.describeIndex(fetch, host, indexName);
+		indexes.set(indexName, index);
+	}
+
 	return await DatabricksVectorStore.fromExistingIndex(embeddings, {
 		fetch,
 		host,
@@ -141,6 +176,7 @@ async function createStore(
 		contentColumn,
 		metadataColumns,
 		filter,
+		index: await index,
 	});
 }
 
@@ -231,7 +267,7 @@ async function getIndexColumns(this: ILoadOptionsFunctions): Promise<INodeProper
 	const info = await DatabricksVectorStore.describeIndex(fetch, host, indexName);
 	const source = info.embeddingSourceColumn;
 	const columns = (info.schemaColumns ?? [])
-		.filter((column) => column !== source)
+		.filter((column) => column !== source && column !== info.vectorColumn)
 		.map((column) => ({ name: column, value: column }));
 	return source
 		? [{ name: source, value: source, description: 'Embedding source column' }, ...columns]

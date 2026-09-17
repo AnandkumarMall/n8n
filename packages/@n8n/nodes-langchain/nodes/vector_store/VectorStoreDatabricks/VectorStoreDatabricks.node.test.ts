@@ -56,6 +56,14 @@ const baseParams = {
 	options: {},
 };
 
+const indexInfo = {
+	name: 'cat.sch.idx',
+	primaryKey: 'id',
+	indexType: 'DELTA_SYNC' as const,
+	embeddingSourceColumn: 'text',
+	schemaColumns: ['id', 'text', 'source'],
+};
+
 describe('VectorStoreDatabricks', () => {
 	let node: VectorStoreDatabricks;
 	const methods = new VectorStoreDatabricks().methods as Required<
@@ -126,6 +134,7 @@ describe('VectorStoreDatabricks', () => {
 		it('creates the store from the credential host and the shared fields', async () => {
 			const store = {};
 			mockedFromExistingIndex.mockResolvedValue(store as DatabricksVectorStore);
+			mockedDescribeIndex.mockResolvedValue(indexInfo);
 			const ctx = setupContext<ISupplyDataFunctions>({
 				...baseParams,
 				mode: 'retrieve',
@@ -144,7 +153,13 @@ describe('VectorStoreDatabricks', () => {
 				contentColumn: 'text',
 				metadataColumns: ['source'],
 				filter: { source: 'hr' },
+				index: indexInfo,
 			});
+			expect(mockedDescribeIndex).toHaveBeenCalledWith(
+				expect.any(Function),
+				'https://ws.example.com',
+				'cat.sch.idx',
+			);
 			expect(result.response).toBeDefined();
 		});
 
@@ -158,20 +173,38 @@ describe('VectorStoreDatabricks', () => {
 			expect(mockedFromExistingIndex).not.toHaveBeenCalled();
 		});
 
-		it('sends the bearer and the partner User-Agent through the store fetch', async () => {
+		it('sends the bearer, the partner User-Agent, the cancel signal and a timeout through the store fetch', async () => {
 			mockedFromExistingIndex.mockResolvedValue({} as DatabricksVectorStore);
 			vi.mocked(proxyFetch).mockResolvedValue(new Response('{}'));
+			const cancelSignal = new AbortController().signal;
 			const ctx = setupContext<ISupplyDataFunctions>({ ...baseParams, mode: 'retrieve' });
+			ctx.getExecutionCancelSignal = vi.fn().mockReturnValue(cancelSignal);
 			await node.supplyData.call(ctx, 0);
 
 			const { fetch } = mockedFromExistingIndex.mock.calls[0][1];
 			await fetch('https://ws.example.com/x');
 
-			const [{ input, init }] = vi.mocked(proxyFetch).mock.calls[0];
+			const [{ input, init, timeoutOptions }] = vi.mocked(proxyFetch).mock.calls[0];
 			expect(String(input)).toBe('https://ws.example.com/x');
 			const headers = new Headers(init?.headers);
 			expect(headers.get('authorization')).toBe('Bearer test-token');
 			expect(headers.get('user-agent')).toBe(DATABRICKS_PARTNER_USER_AGENT);
+			expect(init?.signal).toBe(cancelSignal);
+			expect(timeoutOptions).toEqual({ headersTimeout: 60_000, bodyTimeout: 60_000 });
+		});
+
+		it('keeps a signal the caller already set', async () => {
+			mockedFromExistingIndex.mockResolvedValue({} as DatabricksVectorStore);
+			vi.mocked(proxyFetch).mockResolvedValue(new Response('{}'));
+			const ctx = setupContext<ISupplyDataFunctions>({ ...baseParams, mode: 'retrieve' });
+			ctx.getExecutionCancelSignal = vi.fn().mockReturnValue(new AbortController().signal);
+			await node.supplyData.call(ctx, 0);
+
+			const { fetch } = mockedFromExistingIndex.mock.calls[0][1];
+			const callerSignal = new AbortController().signal;
+			await fetch('https://ws.example.com/x', { signal: callerSignal });
+
+			expect(vi.mocked(proxyFetch).mock.calls[0][0].init?.signal).toBe(callerSignal);
 		});
 	});
 
@@ -192,6 +225,27 @@ describe('VectorStoreDatabricks', () => {
 			expect(store.similaritySearchWithScore).toHaveBeenCalledWith('what is up', 2, undefined);
 			expect(embeddings.embedQuery).not.toHaveBeenCalled();
 			expect(result).toEqual([[{ json: { document: doc, score: 0.9 }, pairedItem: { item: 0 } }]]);
+		});
+
+		it('mints the token and describes the index once for every item of the run', async () => {
+			const store = { similaritySearchWithScore: vi.fn().mockResolvedValue([]) };
+			mockedFromExistingIndex.mockResolvedValue(store as unknown as DatabricksVectorStore);
+			mockedDescribeIndex.mockResolvedValue(indexInfo);
+			const ctx = setupContext<IExecuteFunctions>({
+				...baseParams,
+				mode: 'load',
+				prompt: 'what is up',
+				topK: 2,
+			});
+			ctx.getInputData = vi.fn().mockReturnValue([{ json: {} }, { json: {} }]);
+
+			await node.execute.call(ctx);
+
+			expect(store.similaritySearchWithScore).toHaveBeenCalledTimes(2);
+			expect(mockedFromExistingIndex).toHaveBeenCalledTimes(2);
+			expect(mockedDescribeIndex).toHaveBeenCalledTimes(1);
+			expect(getDatabricksTokenProvider).toHaveBeenCalledTimes(1);
+			expect(ctx.getCredentials).toHaveBeenCalledTimes(1);
 		});
 	});
 
@@ -328,6 +382,22 @@ describe('VectorStoreDatabricks', () => {
 				{ name: 'text', value: 'text', description: 'Embedding source column' },
 				{ name: 'id', value: 'id' },
 				{ name: 'source', value: 'source' },
+			]);
+		});
+
+		it('hides the vector column of a Direct Access index', async () => {
+			mockedDescribeIndex.mockResolvedValue({
+				name: 'cat.sch.idx',
+				primaryKey: 'id',
+				indexType: 'DIRECT_ACCESS',
+				vectorColumn: 'embedding',
+				schemaColumns: ['id', 'text', 'embedding'],
+			});
+			const ctx = setupLoadOptionsContext('cat.sch.idx');
+
+			await expect(methods.loadOptions.getIndexColumns.call(ctx)).resolves.toEqual([
+				{ name: 'id', value: 'id' },
+				{ name: 'text', value: 'text' },
 			]);
 		});
 

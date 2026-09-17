@@ -286,13 +286,15 @@ describe('DatabricksVectorStore', () => {
 			expect(bodyOf(1)).not.toHaveProperty('query_text');
 		});
 
-		it('requests every schema column except the vector column by default', async () => {
+		it('keeps the key, content and vector columns out of the default metadata', async () => {
 			const store = await directStore();
 			fetchMock.mockResolvedValue(json(queryReply));
 
-			await store.similaritySearchWithScore('hello', 2);
+			const [[doc]] = await store.similaritySearchWithScore('hello', 2);
 
 			expect(bodyOf(0).columns).toEqual(['id', 'text', 'source']);
+			expect(doc).toMatchObject({ id: 'a', pageContent: 'hello' });
+			expect(doc.metadata).toEqual({ source: 'hr' });
 		});
 
 		it('rejects an empty content column', async () => {
@@ -357,6 +359,37 @@ describe('DatabricksVectorStore', () => {
 			fetchMock.mockResolvedValue(json(emptyReply));
 
 			await expect(store.similaritySearchWithScore('hello', 2)).resolves.toEqual([]);
+		});
+
+		it('rejects a manifest that lacks a requested column or the score', async () => {
+			const store = await managedStore({ metadataColumns: ['source'] });
+			fetchMock.mockResolvedValue(
+				json({
+					manifest: { columns: [{ name: 'source' }, { name: 'id' }, { name: 'text' }] },
+					result: { row_count: 1, data_array: [['hr', 'a', 'hello']] },
+				}),
+			);
+
+			await expect(store.similaritySearchWithScore('hello', 2)).rejects.toThrow(
+				'Unexpected Databricks query response',
+			);
+		});
+
+		it('reads the trailing score when a metadata column is also named score', async () => {
+			const store = await managedStore({ metadataColumns: ['score'] });
+			fetchMock.mockResolvedValue(
+				json({
+					manifest: {
+						columns: [{ name: 'id' }, { name: 'text' }, { name: 'score' }, { name: 'score' }],
+					},
+					result: { row_count: 1, data_array: [['a', 'hello', 'user-score', 0.7]] },
+				}),
+			);
+
+			const [[doc, score]] = await store.similaritySearchWithScore('hello', 2);
+
+			expect(doc.metadata).toEqual({ score: 'user-score' });
+			expect(score).toBe(0.7);
 		});
 	});
 

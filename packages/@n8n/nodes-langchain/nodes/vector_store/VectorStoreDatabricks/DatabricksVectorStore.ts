@@ -30,11 +30,13 @@ export interface DatabricksVectorStoreConfig {
 	indexName: string;
 	/** Empty falls back to the embedding source column of a managed index */
 	contentColumn?: string;
-	/** Empty falls back to every schema column except the vector column */
+	/** Empty falls back to every schema column except the key, content and vector columns */
 	metadataColumns?: string[];
 	queryType?: 'ANN' | 'HYBRID';
 	/** Default filter when a search passes none (retrieve mode) */
 	filter?: Record<string, unknown>;
+	/** A pre-described index skips the describe GET */
+	index?: DatabricksIndexInfo;
 }
 
 // Copy of sanitizeApiMessage in n8n-nodes-base/nodes/Databricks/actions/helpers.ts; the dist
@@ -146,6 +148,9 @@ export class DatabricksVectorStore extends VectorStore {
 
 	private readonly metadataColumns: string[];
 
+	/** The Document already carries these as id, pageContent and (on insert) the vector */
+	private readonly reserved: Set<string | undefined>;
+
 	private readonly queryType: 'ANN' | 'HYBRID';
 
 	private readonly defaultFilter?: Record<string, unknown>;
@@ -185,13 +190,11 @@ export class DatabricksVectorStore extends VectorStore {
 		embeddings: EmbeddingsInterface,
 		config: DatabricksVectorStoreConfig,
 	): Promise<DatabricksVectorStore> {
-		// ponytail: one describe GET (two on Delta Sync) per store creation; retrieve-as-tool
-		// creates a store per tool call, and insert once per batch. Memoize per (host, index) if it shows up.
-		const index = await DatabricksVectorStore.describeIndex(
-			config.fetch,
-			config.host,
-			config.indexName,
-		);
+		// ponytail: the node memoizes the describe per run (one execute call or one supplyData
+		// closure) and passes `index`; a new run describes again. Cache across runs if it shows up.
+		const index =
+			config.index ??
+			(await DatabricksVectorStore.describeIndex(config.fetch, config.host, config.indexName));
 		return new DatabricksVectorStore(embeddings, { ...config, index });
 	}
 
@@ -211,9 +214,10 @@ export class DatabricksVectorStore extends VectorStore {
 		this.host = config.host;
 		this.index = index;
 		this.contentColumn = contentColumn;
+		this.reserved = new Set([index.primaryKey, contentColumn, index.vectorColumn]);
 		this.metadataColumns = config.metadataColumns?.length
 			? config.metadataColumns
-			: (index.schemaColumns ?? []).filter((column) => column !== index.vectorColumn);
+			: (index.schemaColumns ?? []).filter((column) => !this.reserved.has(column));
 		this.queryType = config.queryType ?? 'ANN';
 		this.defaultFilter = config.filter;
 	}
@@ -286,7 +290,6 @@ export class DatabricksVectorStore extends VectorStore {
 	): Promise<string[]> {
 		const vectorColumn = this.assertDirectAccess();
 		const { primaryKey, name } = this.index;
-		const reserved = new Set([primaryKey, this.contentColumn, vectorColumn]);
 		const schemaColumns = new Set(this.index.schemaColumns ?? []);
 		const ids = documents.map((doc, i) => options?.ids?.[i] ?? doc.id ?? randomUUID());
 
@@ -294,7 +297,7 @@ export class DatabricksVectorStore extends VectorStore {
 		const rows = documents.map((doc, i) => ({
 			...Object.fromEntries(
 				Object.entries(doc.metadata).filter(
-					([key]) => schemaColumns.has(key) && !reserved.has(key),
+					([key]) => schemaColumns.has(key) && !this.reserved.has(key),
 				),
 			),
 			[primaryKey]: ids[i],
@@ -363,17 +366,27 @@ export class DatabricksVectorStore extends VectorStore {
 		const rows = Array.isArray(result.data_array)
 			? result.data_array.filter((row): row is unknown[] => Array.isArray(row))
 			: [];
-		const cell = (row: unknown[], column: string) => row[names.indexOf(column)];
+		if (rows.length === 0) return [];
+
+		const position = (index: number) => {
+			if (index < 0) throw new OperationalError('Unexpected Databricks query response');
+			return index;
+		};
+		const contentAt = position(names.indexOf(this.contentColumn));
+		const idAt = position(names.indexOf(primaryKey));
+		// Databricks appends score last, so a user column named score does not shadow it
+		const scoreAt = position(names.lastIndexOf('score'));
+		const metadataAt = this.metadataColumns.map(
+			(column) => [column, position(names.indexOf(column))] as const,
+		);
 
 		return rows.map((row) => [
 			new Document({
-				pageContent: String(cell(row, this.contentColumn) ?? ''),
-				metadata: Object.fromEntries(
-					this.metadataColumns.map((column) => [column, cell(row, column)]),
-				),
-				id: String(cell(row, primaryKey)),
+				pageContent: String(row[contentAt] ?? ''),
+				metadata: Object.fromEntries(metadataAt.map(([column, at]) => [column, row[at]])),
+				id: String(row[idAt]),
 			}),
-			Number(cell(row, 'score')),
+			Number(row[scoreAt]),
 		]);
 	}
 }
