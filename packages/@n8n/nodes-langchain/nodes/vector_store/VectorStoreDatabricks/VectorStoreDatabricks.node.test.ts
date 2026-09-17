@@ -163,6 +163,24 @@ describe('VectorStoreDatabricks', () => {
 			expect(result.response).toBeDefined();
 		});
 
+		it('describes the index again after a failed describe in the same run', async () => {
+			mockedFromExistingIndex.mockResolvedValue({} as DatabricksVectorStore);
+			mockedDescribeIndex
+				.mockRejectedValueOnce(new Error('503 Service Unavailable'))
+				.mockResolvedValueOnce(indexInfo);
+			const ctx = setupContext<ISupplyDataFunctions>({ ...baseParams, mode: 'retrieve' });
+
+			await expect(node.supplyData.call(ctx, 0)).rejects.toThrow('503');
+			await node.supplyData.call(ctx, 0);
+
+			expect(mockedDescribeIndex).toHaveBeenCalledTimes(2);
+			expect(mockedFromExistingIndex).toHaveBeenCalledTimes(1);
+			expect(mockedFromExistingIndex).toHaveBeenCalledWith(
+				embeddings,
+				expect.objectContaining({ index: indexInfo }),
+			);
+		});
+
 		it('rejects an http host before describing the index', async () => {
 			const ctx = setupContext<ISupplyDataFunctions>(
 				{ ...baseParams, mode: 'retrieve' },
@@ -173,12 +191,12 @@ describe('VectorStoreDatabricks', () => {
 			expect(mockedFromExistingIndex).not.toHaveBeenCalled();
 		});
 
-		it('sends the bearer, the partner User-Agent, the cancel signal and a timeout through the store fetch', async () => {
+		it('sends the bearer, the partner User-Agent and a cancellable signal through the shared pool', async () => {
 			mockedFromExistingIndex.mockResolvedValue({} as DatabricksVectorStore);
 			vi.mocked(proxyFetch).mockResolvedValue(new Response('{}'));
-			const cancelSignal = new AbortController().signal;
+			const cancel = new AbortController();
 			const ctx = setupContext<ISupplyDataFunctions>({ ...baseParams, mode: 'retrieve' });
-			ctx.getExecutionCancelSignal = vi.fn().mockReturnValue(cancelSignal);
+			ctx.getExecutionCancelSignal = vi.fn().mockReturnValue(cancel.signal);
 			await node.supplyData.call(ctx, 0);
 
 			const { fetch } = mockedFromExistingIndex.mock.calls[0][1];
@@ -189,11 +207,15 @@ describe('VectorStoreDatabricks', () => {
 			const headers = new Headers(init?.headers);
 			expect(headers.get('authorization')).toBe('Bearer test-token');
 			expect(headers.get('user-agent')).toBe(DATABRICKS_PARTNER_USER_AGENT);
-			expect(init?.signal).toBe(cancelSignal);
-			expect(timeoutOptions).toEqual({ headersTimeout: 60_000, bodyTimeout: 60_000 });
+			// No timeoutOptions: they would force a fresh undici Agent for every request
+			expect(timeoutOptions).toBeUndefined();
+			expect(init?.signal).toBeInstanceOf(AbortSignal);
+			expect(init?.signal?.aborted).toBe(false);
+			cancel.abort();
+			expect(init?.signal?.aborted).toBe(true);
 		});
 
-		it('keeps a signal the caller already set', async () => {
+		it('aborts on a signal the caller already set', async () => {
 			mockedFromExistingIndex.mockResolvedValue({} as DatabricksVectorStore);
 			vi.mocked(proxyFetch).mockResolvedValue(new Response('{}'));
 			const ctx = setupContext<ISupplyDataFunctions>({ ...baseParams, mode: 'retrieve' });
@@ -201,10 +223,13 @@ describe('VectorStoreDatabricks', () => {
 			await node.supplyData.call(ctx, 0);
 
 			const { fetch } = mockedFromExistingIndex.mock.calls[0][1];
-			const callerSignal = new AbortController().signal;
-			await fetch('https://ws.example.com/x', { signal: callerSignal });
+			const caller = new AbortController();
+			await fetch('https://ws.example.com/x', { signal: caller.signal });
 
-			expect(vi.mocked(proxyFetch).mock.calls[0][0].init?.signal).toBe(callerSignal);
+			const signal = vi.mocked(proxyFetch).mock.calls[0][0].init?.signal;
+			expect(signal?.aborted).toBe(false);
+			caller.abort();
+			expect(signal?.aborted).toBe(true);
 		});
 	});
 

@@ -4,7 +4,7 @@ import { Document, type DocumentInterface } from '@langchain/core/documents';
 import type { EmbeddingsInterface } from '@langchain/core/embeddings';
 import { VectorStore } from '@langchain/core/vectorstores';
 import { isRecord } from '@n8n/utils/is-record';
-import { OperationalError } from 'n8n-workflow';
+import { OperationalError, UserError } from 'n8n-workflow';
 
 type Fetch = typeof fetch;
 
@@ -206,7 +206,7 @@ export class DatabricksVectorStore extends VectorStore {
 		const { index } = config;
 		const contentColumn = config.contentColumn || index.embeddingSourceColumn;
 		if (!contentColumn) {
-			throw new OperationalError(
+			throw new UserError(
 				`Index ${index.name} uses self-managed embeddings. Select a content column`,
 			);
 		}
@@ -265,7 +265,7 @@ export class DatabricksVectorStore extends VectorStore {
 		filter?: this['FilterType'],
 	): Promise<Array<[Document, number]>> {
 		if (this.isManaged) {
-			throw new OperationalError(
+			throw new UserError(
 				`Index ${this.index.name} uses Databricks-managed embeddings and accepts text queries only`,
 			);
 		}
@@ -324,7 +324,7 @@ export class DatabricksVectorStore extends VectorStore {
 	private assertDirectAccess(): string {
 		const { indexType, vectorColumn, name } = this.index;
 		if (indexType !== 'DIRECT_ACCESS') {
-			throw new OperationalError(
+			throw new UserError(
 				`Index ${name} syncs from its source table. Use a Direct Access index to insert documents`,
 			);
 		}

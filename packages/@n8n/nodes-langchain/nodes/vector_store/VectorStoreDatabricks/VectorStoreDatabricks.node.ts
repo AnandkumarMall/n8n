@@ -91,7 +91,7 @@ const sharedFields: INodeProperties[] = [
 				default: [],
 				typeOptions: columnTypeOptions,
 				description:
-					'Columns to store in document metadata. Defaults to all columns except the key, content and vector columns. Choose from the list, or specify IDs using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
+					'Columns to return in document metadata. Defaults to all columns except the key, content and vector columns. Choose from the list, or specify IDs using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
 			},
 		],
 	},
@@ -119,13 +119,19 @@ async function openRun(ctx: DatabricksFetchContext): Promise<Run> {
 	const { fetch } = createDatabricksAuthFetch(ctx, credential, {
 		endpointUrl: host,
 		egressFilter,
-		baseFetch: async (input, init) =>
-			await proxyFetch({
+		baseFetch: async (input, init) => {
+			// A whole-request deadline on the signal keeps the shared undici pool; per-request
+			// timeoutOptions would build a new Agent for every hop. The responses are small JSON
+			// bodies, so the deadline covers headers and body alike
+			const signals = [AbortSignal.timeout(REQUEST_TIMEOUT_MS)];
+			if (init?.signal) signals.push(init.signal);
+			if (cancelSignal) signals.push(cancelSignal);
+			return await proxyFetch({
 				input,
-				init: { ...init, signal: init?.signal ?? cancelSignal },
-				timeoutOptions: { headersTimeout: REQUEST_TIMEOUT_MS, bodyTimeout: REQUEST_TIMEOUT_MS },
+				init: { ...init, signal: AbortSignal.any(signals) },
 				egressFilter,
-			}),
+			});
+		},
 	});
 	return { fetch, host, indexes: new Map() };
 }
@@ -165,7 +171,11 @@ async function createStore(
 
 	let index = indexes.get(indexName);
 	if (!index) {
-		index = DatabricksVectorStore.describeIndex(fetch, host, indexName);
+		// Evict a rejected describe so one transient failure does not poison the rest of the run
+		index = DatabricksVectorStore.describeIndex(fetch, host, indexName).catch((error) => {
+			indexes.delete(indexName);
+			throw error;
+		});
 		indexes.set(indexName, index);
 	}
 

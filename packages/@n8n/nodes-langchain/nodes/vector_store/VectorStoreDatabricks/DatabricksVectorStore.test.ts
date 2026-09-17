@@ -361,13 +361,17 @@ describe('DatabricksVectorStore', () => {
 			await expect(store.similaritySearchWithScore('hello', 2)).resolves.toEqual([]);
 		});
 
-		it('rejects a manifest that lacks a requested column or the score', async () => {
+		it.each([
+			['the score', [{ name: 'source' }, { name: 'id' }, { name: 'text' }], ['hr', 'a', 'hello']],
+			[
+				'a requested column',
+				[{ name: 'id' }, { name: 'text' }, { name: 'score' }],
+				['a', 'hello', 0.9],
+			],
+		])('rejects a manifest that lacks %s', async (_label, columns, row) => {
 			const store = await managedStore({ metadataColumns: ['source'] });
 			fetchMock.mockResolvedValue(
-				json({
-					manifest: { columns: [{ name: 'source' }, { name: 'id' }, { name: 'text' }] },
-					result: { row_count: 1, data_array: [['hr', 'a', 'hello']] },
-				}),
+				json({ manifest: { columns }, result: { row_count: 1, data_array: [row] } }),
 			);
 
 			await expect(store.similaritySearchWithScore('hello', 2)).rejects.toThrow(
