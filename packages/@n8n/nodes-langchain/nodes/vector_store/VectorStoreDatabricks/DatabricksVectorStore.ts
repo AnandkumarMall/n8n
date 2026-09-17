@@ -37,12 +37,22 @@ export interface DatabricksVectorStoreConfig {
 	filter?: Record<string, unknown>;
 }
 
+// Copy of sanitizeApiMessage in n8n-nodes-base/nodes/Databricks/actions/helpers.ts; the dist
+// import would pull that module's @n8n/backend-network graph
+function sanitizeMessage(message: string): string {
+	// eslint-disable-next-line no-control-regex
+	return message.replace(/[\x00-\x1f\x7f]+/g, ' ').slice(0, 500);
+}
+
 const FULL_NAME = /^[^/\s]+\.[^/\s]+\.[^/\s]+$/;
 
-// `.` and `..` survive encodeURIComponent, so the shape is checked before a URL is built
+// `.` and `..` survive encodeURIComponent, so the shape is checked before a URL is built.
+// `sourceTable` comes from the server, so the echoed value is sanitized
 function assertFullName(value: string, what: string): void {
 	if (!FULL_NAME.test(value)) {
-		throw new OperationalError(`Invalid Databricks ${what} "${value}": use catalog.schema.${what}`);
+		throw new OperationalError(
+			`Invalid Databricks ${what} "${sanitizeMessage(value)}": use catalog.schema.${what}`,
+		);
 	}
 }
 
@@ -75,7 +85,12 @@ export function parseIndexInfo(raw: unknown): DatabricksIndexInfo {
 
 	let schemaColumns: string[] | undefined;
 	if (typeof directSpec?.schema_json === 'string') {
-		const schema: unknown = JSON.parse(directSpec.schema_json);
+		let schema: unknown;
+		try {
+			schema = JSON.parse(directSpec.schema_json);
+		} catch {
+			throw new OperationalError('Unexpected Databricks index description');
+		}
 		schemaColumns = isRecord(schema) ? Object.keys(schema) : undefined;
 	} else {
 		// A Delta Sync index holds only the synced columns, so prefer them over the source table
@@ -94,16 +109,10 @@ export function parseIndexInfo(raw: unknown): DatabricksIndexInfo {
 	};
 }
 
-// Body text comes from whatever server `host` points at
-function sanitizeMessage(message: string): string {
-	// eslint-disable-next-line no-control-regex
-	return message.replace(/[\x00-\x1f\x7f]+/g, ' ').slice(0, 500);
-}
-
 async function databricksRequest(
 	fetchFn: Fetch,
 	url: string,
-	init?: RequestInit,
+	init?: Pick<RequestInit, 'method' | 'body'>,
 ): Promise<unknown> {
 	const response = await fetchFn(url, {
 		...init,
@@ -131,7 +140,7 @@ export class DatabricksVectorStore extends VectorStore {
 
 	private readonly host: string;
 
-	readonly index: DatabricksIndexInfo;
+	private readonly index: DatabricksIndexInfo;
 
 	private readonly contentColumn: string;
 
@@ -165,6 +174,8 @@ export class DatabricksVectorStore extends VectorStore {
 				info.schemaColumns = records(isRecord(table) ? table.columns : undefined).flatMap(
 					(column) => (typeof column.name === 'string' ? [column.name] : []),
 				);
+			} else {
+				await response.body?.cancel();
 			}
 		}
 		return info;
@@ -175,7 +186,7 @@ export class DatabricksVectorStore extends VectorStore {
 		config: DatabricksVectorStoreConfig,
 	): Promise<DatabricksVectorStore> {
 		// ponytail: one describe GET (two on Delta Sync) per store creation; retrieve-as-tool
-		// creates a store per tool call. Memoize per (host, index) if it shows up.
+		// creates a store per tool call, and insert once per batch. Memoize per (host, index) if it shows up.
 		const index = await DatabricksVectorStore.describeIndex(
 			config.fetch,
 			config.host,
@@ -309,10 +320,13 @@ export class DatabricksVectorStore extends VectorStore {
 	// Databricks enforces `index_type` here; a Delta Sync index rejects upsert-data even when it holds its own vectors
 	private assertDirectAccess(): string {
 		const { indexType, vectorColumn, name } = this.index;
-		if (indexType !== 'DIRECT_ACCESS' || !vectorColumn) {
+		if (indexType !== 'DIRECT_ACCESS') {
 			throw new OperationalError(
 				`Index ${name} syncs from its source table. Use a Direct Access index to insert documents`,
 			);
+		}
+		if (!vectorColumn) {
+			throw new OperationalError('Unexpected Databricks index description');
 		}
 		return vectorColumn;
 	}
@@ -324,14 +338,22 @@ export class DatabricksVectorStore extends VectorStore {
 		const { primaryKey, name } = this.index;
 		const columns = [...new Set([primaryKey, this.contentColumn, ...this.metadataColumns])];
 		const effectiveFilter = filter ?? this.defaultFilter;
-		if (effectiveFilter && Object.keys(effectiveFilter).length > 0) {
-			body.filters_json = JSON.stringify(effectiveFilter);
-		}
+		const filtersJson =
+			effectiveFilter && Object.keys(effectiveFilter).length > 0
+				? JSON.stringify(effectiveFilter)
+				: undefined;
 
 		const response = await databricksRequest(
 			this.fetch,
 			`${this.host}/api/2.0/vector-search/indexes/${encodeURIComponent(name)}/query`,
-			{ method: 'POST', body: JSON.stringify({ ...body, columns }) },
+			{
+				method: 'POST',
+				body: JSON.stringify({
+					...body,
+					columns,
+					...(filtersJson && { filters_json: filtersJson }),
+				}),
+			},
 		);
 
 		// Databricks returns the requested columns plus `score`; read every cell by manifest name

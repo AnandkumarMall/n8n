@@ -195,6 +195,34 @@ describe('VectorStoreDatabricks', () => {
 		});
 	});
 
+	describe('execute in insert mode', () => {
+		it('adds the loaded documents through the store', async () => {
+			const documents = [
+				{ pageContent: 'hello', metadata: { source: 'hr' } },
+				{ pageContent: 'world', metadata: {} },
+			];
+			const store = {
+				addDocuments: vi.fn(async (docs: unknown[]) => docs.map((_, i) => String(i))),
+			};
+			mockedFromExistingIndex.mockResolvedValue(store as unknown as DatabricksVectorStore);
+			const ctx = setupContext<IExecuteFunctions>({ ...baseParams, mode: 'insert' });
+			ctx.getInputConnectionData = vi
+				.fn()
+				.mockResolvedValueOnce(embeddings)
+				.mockResolvedValueOnce(documents);
+			ctx.getExecutionCancelSignal = vi.fn().mockReturnValue(undefined);
+
+			const result = await node.execute.call(ctx);
+
+			expect(mockedFromExistingIndex).toHaveBeenCalledWith(
+				embeddings,
+				expect.objectContaining({ indexName: 'cat.sch.idx', filter: undefined }),
+			);
+			expect(store.addDocuments).toHaveBeenCalledWith(documents);
+			expect(result).toEqual([documents.map((doc) => ({ json: doc, pairedItem: { item: 0 } }))]);
+		});
+	});
+
 	describe('searchIndexes', () => {
 		const pages: Record<string, unknown> = {
 			endpoints: { endpoints: [{ name: 'ep1' }, { name: 'ep2' }] },
@@ -247,6 +275,14 @@ describe('VectorStoreDatabricks', () => {
 			const result = await methods.listSearch.searchIndexes.call(ctx, 'ZETA');
 
 			expect(result.results.map((r) => r.value)).toEqual(['cat.sch.zeta']);
+		});
+
+		it('stops after 50 pages when a page echoes its own token', async () => {
+			setupSearchContext('https://ws.example.com');
+			httpRequestWithAuthentication.mockResolvedValue({ endpoints: [], next_page_token: 'loop' });
+
+			await expect(methods.listSearch.searchIndexes.call(ctx)).rejects.toThrow('50 pages');
+			expect(httpRequestWithAuthentication).toHaveBeenCalledTimes(50);
 		});
 
 		it('rejects an http host before any request', async () => {

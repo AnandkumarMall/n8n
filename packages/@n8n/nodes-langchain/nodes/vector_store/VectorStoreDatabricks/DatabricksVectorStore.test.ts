@@ -122,6 +122,16 @@ describe('DatabricksVectorStore', () => {
 		it.each([
 			['missing primary key', { ...managedDescribe, primary_key: undefined }],
 			['unknown index type', { ...managedDescribe, index_type: 'OTHER' }],
+			[
+				'malformed schema_json',
+				{
+					...directDescribe,
+					direct_access_index_spec: {
+						...directDescribe.direct_access_index_spec,
+						schema_json: '{',
+					},
+				},
+			],
 		])('throws on %s', (_label, raw) => {
 			expect(() => parseIndexInfo(raw)).toThrow('Unexpected Databricks index description');
 		});
@@ -163,6 +173,33 @@ describe('DatabricksVectorStore', () => {
 			const info = await DatabricksVectorStore.describeIndex(fetchMock, host, 'cat.sch.idx');
 
 			expect(info.schemaColumns).toBeUndefined();
+		});
+
+		it('propagates a transport error from the Unity Catalog lookup', async () => {
+			fetchMock
+				.mockResolvedValueOnce(json(managedDescribe))
+				.mockRejectedValueOnce(new Error('ECONNRESET'));
+
+			await expect(
+				DatabricksVectorStore.describeIndex(fetchMock, host, 'cat.sch.idx'),
+			).rejects.toThrow('ECONNRESET');
+		});
+
+		it('rejects a malformed source table name before the Unity Catalog request', async () => {
+			fetchMock.mockResolvedValueOnce(
+				json({
+					...managedDescribe,
+					delta_sync_index_spec: {
+						...managedDescribe.delta_sync_index_spec,
+						source_table: 'cat.sch/x.y',
+					},
+				}),
+			);
+
+			await expect(
+				DatabricksVectorStore.describeIndex(fetchMock, host, 'cat.sch.idx'),
+			).rejects.toThrow('catalog.schema.table');
+			expect(fetchMock).toHaveBeenCalledTimes(1);
 		});
 
 		it('does not call Unity Catalog for a Direct Access index', async () => {
@@ -234,15 +271,19 @@ describe('DatabricksVectorStore', () => {
 
 		it('sends the text next to the vector for a HYBRID search', async () => {
 			const store = await directStore({ queryType: 'HYBRID' });
-			fetchMock.mockResolvedValue(json(queryReply));
+			fetchMock.mockImplementation(async () => json(queryReply));
 
 			await store.similaritySearchWithScore('hello', 2);
+			await store.similaritySearchVectorWithScore([0.1, 0.2, 0.3], 2);
 
 			expect(bodyOf(0)).toMatchObject({
 				query_type: 'HYBRID',
 				query_text: 'hello',
 				query_vector: [0.1, 0.2, 0.3],
 			});
+			// The vector path has no text, so it stays ANN
+			expect(bodyOf(1)).toMatchObject({ query_type: 'ANN', query_vector: [0.1, 0.2, 0.3] });
+			expect(bodyOf(1)).not.toHaveProperty('query_text');
 		});
 
 		it('requests every schema column except the vector column by default', async () => {
@@ -300,11 +341,8 @@ describe('DatabricksVectorStore', () => {
 			const results = await store.similaritySearchWithScore('hello', 2);
 
 			expect(results).toHaveLength(2);
-			expect(results[0][0]).toMatchObject({
-				pageContent: 'hello',
-				metadata: { source: 'hr' },
-				id: 'a',
-			});
+			expect(results[0][0]).toMatchObject({ pageContent: 'hello', id: 'a' });
+			expect(results[0][0].metadata).toEqual({ source: 'hr' });
 			expect(results[0][1]).toBe(0.9);
 			expect(results[1][0]).toMatchObject({
 				pageContent: 'world',
@@ -357,12 +395,15 @@ describe('DatabricksVectorStore', () => {
 		it('lists the failed keys when Databricks rejects rows', async () => {
 			const store = await directStore();
 			fetchMock.mockResolvedValue(
-				json({ status: 'FAILURE', result: { success_row_count: 0, failed_primary_keys: ['a'] } }),
+				json({
+					status: 'FAILURE',
+					result: { success_row_count: 0, failed_primary_keys: ['row-7'] },
+				}),
 			);
 
 			await expect(
-				store.addDocuments([{ pageContent: 'hello', metadata: {}, id: 'a' }]),
-			).rejects.toThrow('a');
+				store.addDocuments([{ pageContent: 'hello', metadata: {}, id: 'row-7' }]),
+			).rejects.toThrow('Failed primary keys: row-7');
 		});
 
 		it('rejects a managed Delta Sync index without a request', async () => {

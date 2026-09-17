@@ -50,7 +50,7 @@ export function createDatabricksAuthFetch(
 
 	const tokenSource = getDatabricksTokenProvider(ctx, credential, egressFilter);
 	const { refreshAfterRejection } = tokenSource;
-	// The model client builds its own transport, so it never reaches the
+	// The caller builds its own transport, so it never reaches the
 	// request helpers: `resolveHeaders` runs the expiry clock before every
 	// request, and `refreshHeaders` covers the rejection the clock missed -
 	// revoked server-side, or clock skew
