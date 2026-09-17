@@ -31,12 +31,14 @@ import ExperimentalEmbeddedNdvHeader from '@/features/workflows/canvas/experimen
 import FreeAiCreditsCallout from '@/app/components/FreeAiCreditsCallout.vue';
 import NodeActionsList from '@/app/components/NodeActionsList.vue';
 import NodeSettingsInvalidNodeWarning from './NodeSettingsInvalidNodeWarning.vue';
-import NodeSettingsRestrictedCallout from './NodeSettingsRestrictedCallout.vue';
 import { useExternalHooks } from '@/app/composables/useExternalHooks';
 import { useInstalledCommunityPackage } from '@/features/settings/communityNodes/composables/useInstalledCommunityPackage';
 import { useNodeCredentialOptions } from '@/features/credentials/composables/useNodeCredentialOptions';
 import { useNodeHelpers } from '@/app/composables/useNodeHelpers';
-import { useNodeTypeRestriction } from '@n8n/frontend-module-type-availability-policies';
+import {
+	RestrictedNodeCallout,
+	useNodeTypeRestriction,
+} from '@n8n/frontend-module-type-availability-policies';
 import { useNodeSettingsParameters } from '@/features/ndv/settings/composables/useNodeSettingsParameters';
 import { useTelemetry } from '@n8n/composables/useTelemetry';
 import { importCurlEventBus } from '@/app/event-bus';
@@ -727,7 +729,7 @@ function handleSelectAction(params: INodeParameters) {
 			data-test-id="node-parameters"
 			@wheel.capture="emit('captureWheelBody', $event)"
 		>
-			<NodeSettingsRestrictedCallout
+			<RestrictedNodeCallout
 				v-if="isRestricted"
 				:node-type-name="nodeType?.displayName ?? node.type"
 				:scope="restrictionScope"

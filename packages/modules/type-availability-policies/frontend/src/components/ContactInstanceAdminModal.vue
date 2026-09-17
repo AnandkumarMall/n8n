@@ -1,9 +1,9 @@
 <script lang="ts" setup>
-import { computed, ref, watch } from 'vue';
 import { ROLE } from '@n8n/api-types';
 import { N8nAvatar, N8nDialog, N8nLink, N8nLoading, N8nText } from '@n8n/design-system';
 import { useI18n } from '@n8n/i18n';
 import { useUsersStore } from '@n8n/stores/users.store';
+import { computed, ref, watch } from 'vue';
 
 const props = defineProps<{
 	description: string;
@@ -44,7 +44,7 @@ function mailtoHref(email: string): string {
 <template>
 	<N8nDialog
 		v-model:open="open"
-		:header="i18n.baseText('contactInstanceAdmin.modal.title')"
+		:header="i18n.baseText('typeAvailabilityPolicies.contactAdmin.title')"
 		:description="description"
 		size="small"
 		data-test-id="contact-instance-admin-modal"
@@ -62,7 +62,7 @@ function mailtoHref(email: string): string {
 			</li>
 		</ul>
 		<N8nText v-else size="small" color="text-base" data-test-id="contact-instance-admin-empty">
-			{{ i18n.baseText('contactInstanceAdmin.modal.empty') }}
+			{{ i18n.baseText('typeAvailabilityPolicies.contactAdmin.empty') }}
 		</N8nText>
 	</N8nDialog>
 </template>

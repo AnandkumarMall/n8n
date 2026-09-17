@@ -5,3 +5,5 @@ export {
 	isNodeTypeRestricted,
 	useNodeTypeRestriction,
 } from './composables/useNodeTypeRestriction';
+export { default as RestrictedNodeCallout } from './components/RestrictedNodeCallout.vue';
+export { default as ContactInstanceAdminModal } from './components/ContactInstanceAdminModal.vue';

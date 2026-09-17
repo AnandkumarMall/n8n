@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
 import { N8nButton, N8nCallout, N8nText } from '@n8n/design-system';
 import { useI18n, type BaseTextKey } from '@n8n/i18n';
+import { computed, ref } from 'vue';
 
-import ContactInstanceAdminModal from '@/app/components/ContactInstanceAdminModal.vue';
+import ContactInstanceAdminModal from './ContactInstanceAdminModal.vue';
 
 const props = withDefaults(
 	defineProps<{
@@ -20,9 +20,13 @@ const i18n = useI18n();
 const isContactAdminOpen = ref(false);
 
 const descriptionKey = computed<BaseTextKey>(() => {
-	if (props.scope === 'instance') return 'nodeSettings.restricted.description.instance';
-	if (props.scope === 'project') return 'nodeSettings.restricted.description.project';
-	return 'nodeSettings.restricted.description.generic';
+	if (props.scope === 'instance') {
+		return 'typeAvailabilityPolicies.restrictedNode.description.instance';
+	}
+	if (props.scope === 'project') {
+		return 'typeAvailabilityPolicies.restrictedNode.description.project';
+	}
+	return 'typeAvailabilityPolicies.restrictedNode.description.generic';
 });
 
 const interpolate = computed(() => ({ nodeType: props.nodeTypeName }));
@@ -37,7 +41,7 @@ const interpolate = computed(() => ({ nodeType: props.nodeTypeName }));
 			data-test-id="node-restricted-callout"
 		>
 			<N8nText :class="$style.line" size="small" bold>
-				{{ i18n.baseText('nodeSettings.restricted.title') }}
+				{{ i18n.baseText('typeAvailabilityPolicies.restrictedNode.title') }}
 			</N8nText>
 			<N8nText :class="$style.line" size="small">
 				{{ i18n.baseText(descriptionKey, { interpolate }) }}
@@ -50,7 +54,7 @@ const interpolate = computed(() => ({ nodeType: props.nodeTypeName }));
 						data-test-id="node-restricted-contact-admin"
 						@click="isContactAdminOpen = true"
 					>
-						{{ i18n.baseText('nodeSettings.restricted.contactAdmin') }}
+						{{ i18n.baseText('typeAvailabilityPolicies.restrictedNode.contactAdmin') }}
 					</N8nButton>
 					<N8nButton
 						v-if="showReplace"
@@ -60,7 +64,7 @@ const interpolate = computed(() => ({ nodeType: props.nodeTypeName }));
 						data-test-id="node-restricted-replace"
 						@click="emit('replaceNode')"
 					>
-						{{ i18n.baseText('nodeSettings.restricted.replaceNode') }}
+						{{ i18n.baseText('typeAvailabilityPolicies.restrictedNode.replaceNode') }}
 					</N8nButton>
 				</div>
 			</template>
@@ -68,10 +72,14 @@ const interpolate = computed(() => ({ nodeType: props.nodeTypeName }));
 		<ContactInstanceAdminModal
 			v-model:open="isContactAdminOpen"
 			:description="
-				i18n.baseText('nodeSettings.restricted.contactAdmin.description', { interpolate })
+				i18n.baseText('typeAvailabilityPolicies.restrictedNode.contactAdmin.description', {
+					interpolate,
+				})
 			"
 			:mail-subject="
-				i18n.baseText('nodeSettings.restricted.contactAdmin.mailSubject', { interpolate })
+				i18n.baseText('typeAvailabilityPolicies.restrictedNode.contactAdmin.mailSubject', {
+					interpolate,
+				})
 			"
 		/>
 	</div>

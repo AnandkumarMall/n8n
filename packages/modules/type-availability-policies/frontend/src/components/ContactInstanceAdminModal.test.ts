@@ -1,12 +1,11 @@
-import { describe, it, expect, vi } from 'vitest';
-import { createTestingPinia } from '@pinia/testing';
-import { setActivePinia } from 'pinia';
 import { ROLE } from '@n8n/api-types';
+import { createComponentRenderer, mockedStore } from '@n8n/frontend-test-utils';
 import type { IUser } from '@n8n/rest-api-client/api/users';
 import { useUsersStore } from '@n8n/stores/users.store';
+import { createTestingPinia } from '@pinia/testing';
+import { setActivePinia } from 'pinia';
+import { describe, it, expect, vi } from 'vitest';
 
-import { createComponentRenderer } from '@/__tests__/render';
-import { mockedStore } from '@/__tests__/utils';
 import ContactInstanceAdminModal from './ContactInstanceAdminModal.vue';
 
 vi.mock('@n8n/design-system', async (importOriginal) => {
