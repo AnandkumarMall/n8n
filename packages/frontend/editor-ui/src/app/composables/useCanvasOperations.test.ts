@@ -254,7 +254,9 @@ describe('useCanvasOperations', () => {
 		) as WritableDocumentStore;
 
 		mockedStore(usePostHog).isFeatureEnabled.mockReturnValue(true);
-		mockedStore(useTypeAvailabilityPoliciesStore).isNodeTypeAvailable.mockReturnValue(true);
+		mockedStore(useTypeAvailabilityPoliciesStore).getNodeTypeAvailability.mockImplementation(
+			(name) => ({ name, available: true }),
+		);
 
 		// These actions are stubbed by createTestingPinia, so provide safe defaults.
 		// Tests that need custom behavior can override via vi.spyOn.
@@ -4667,8 +4669,8 @@ describe('useCanvasOperations', () => {
 			nodes[1].type = 'n8n-nodes-base.slack';
 			workflowDocumentStoreInstance.allNodes = nodes;
 			vi.spyOn(workflowDocumentStoreInstance, 'getNodesByIds').mockReturnValue(nodes);
-			mockedStore(useTypeAvailabilityPoliciesStore).isNodeTypeAvailable.mockImplementation(
-				(name) => name !== 'n8n-nodes-base.slack',
+			mockedStore(useTypeAvailabilityPoliciesStore).getNodeTypeAvailability.mockImplementation(
+				(name) => ({ name, available: name !== 'n8n-nodes-base.slack' }),
 			);
 
 			const { copyNodes } = useCanvasOperations();

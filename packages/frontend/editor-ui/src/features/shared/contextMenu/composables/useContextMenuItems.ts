@@ -22,7 +22,7 @@ import { useEditorContext } from '@/app/composables/useEditorContext';
 import { usePinnedData } from '@/app/composables/usePinnedData';
 import { useSelectionValidation } from '@/app/composables/useSelectionValidation';
 import { injectWorkflowDocumentStore } from '@/app/stores/workflowDocument.store';
-import { useTypeAvailabilityPoliciesStore } from '@n8n/frontend-module-type-availability-policies';
+import { isNodeTypeRestricted } from '@n8n/frontend-module-type-availability-policies';
 import { injectContextMenuGroupView } from './contextMenuGroupView';
 
 export type ContextMenuAction =
@@ -94,7 +94,6 @@ export function useContextMenuItems(
 	const sourceControlStore = useSourceControlStore();
 	const collaborationStore = useCollaborationStore();
 	const focusedNodesStore = useFocusedNodesStore();
-	const typeAvailabilityPoliciesStore = useTypeAvailabilityPoliciesStore();
 	const posthog = usePostHog();
 	const { resolveGroupableNodeIds } = useSelectionValidation();
 	const groupView = injectContextMenuGroupView();
@@ -146,8 +145,7 @@ export function useContextMenuItems(
 		return nodeType.maxNodes === undefined || sameTypeNodes.length < nodeType.maxNodes;
 	};
 
-	const isRestricted = (node: INode): boolean =>
-		!typeAvailabilityPoliciesStore.isNodeTypeAvailable(node.type);
+	const isRestricted = (node: INode): boolean => isNodeTypeRestricted(node.type);
 
 	const canDuplicateNode = (node: INode): boolean => {
 		if (isRestricted(node)) return false;

@@ -4,7 +4,7 @@ import { isCommunityPackageName } from 'n8n-workflow';
 import type { CanvasNodeData } from '../canvas.types';
 import { CanvasNodeRenderType, CanvasConnectionMode } from '../canvas.types';
 import { useNodeTypesStore } from '@/app/stores/nodeTypes.store';
-import { useTypeAvailabilityPoliciesStore } from '@n8n/frontend-module-type-availability-policies';
+import { useNodeTypeRestriction } from '@n8n/frontend-module-type-availability-policies';
 
 export function useCanvasNode() {
 	const node = inject(CanvasNodeKey);
@@ -67,11 +67,7 @@ export function useCanvasNode() {
 			!useNodeTypesStore().getIsNodeInstalled(data.value.type),
 	);
 
-	const typeAvailability = computed(() =>
-		useTypeAvailabilityPoliciesStore().getNodeTypeAvailability(data.value.type),
-	);
-	const isRestricted = computed(() => typeAvailability.value?.available === false);
-	const restrictionScope = computed(() => typeAvailability.value?.scope);
+	const { isRestricted, restrictionScope } = useNodeTypeRestriction(() => data.value.type);
 
 	return {
 		node,

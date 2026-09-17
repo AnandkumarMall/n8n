@@ -1037,8 +1037,8 @@ describe('useContextMenu', () => {
 		beforeEach(() => {
 			workflowDocumentStore.setNodes([...nodes, restrictedNode]);
 			const typeAvailabilityPoliciesStore = useTypeAvailabilityPoliciesStore();
-			vi.spyOn(typeAvailabilityPoliciesStore, 'isNodeTypeAvailable').mockImplementation(
-				(name) => name !== restrictedNode.type,
+			vi.spyOn(typeAvailabilityPoliciesStore, 'getNodeTypeAvailability').mockImplementation(
+				(name) => ({ name, available: name !== restrictedNode.type }),
 			);
 		});
 

@@ -67,7 +67,7 @@ import { useHistoryStore } from '@/app/stores/history.store';
 import { useNDVStore } from '@/features/ndv/shared/ndv.store';
 import { useNodeCreatorStore } from '@/features/shared/nodeCreator/nodeCreator.store';
 import { useNodeTypesStore } from '@/app/stores/nodeTypes.store';
-import { useTypeAvailabilityPoliciesStore } from '@n8n/frontend-module-type-availability-policies';
+import { isNodeTypeRestricted } from '@n8n/frontend-module-type-availability-policies';
 import { useRootStore } from '@n8n/stores/useRootStore';
 import { useSettingsStore } from '@n8n/stores/settings.store';
 import { useTagsStore } from '@/features/shared/tags/tags.store';
@@ -241,7 +241,6 @@ export function useCanvasOperations() {
 	const historyStore = useHistoryStore();
 	const uiStore = useUIStore();
 	const nodeTypesStore = useNodeTypesStore();
-	const typeAvailabilityPoliciesStore = useTypeAvailabilityPoliciesStore();
 	const canvasStore = useCanvasStore();
 	const agentNodeCanvasGeometryStore = useAgentNodeCanvasGeometryStore();
 	const settingsStore = useSettingsStore();
@@ -3496,9 +3495,7 @@ export function useCanvasOperations() {
 
 	async function copyNodes(ids: string[]): Promise<boolean> {
 		const nodes = workflowDocumentStore.value.getNodesByIds(ids);
-		const hasRestrictedNode = nodes.some(
-			(node) => !typeAvailabilityPoliciesStore.isNodeTypeAvailable(node.type),
-		);
+		const hasRestrictedNode = nodes.some((node) => isNodeTypeRestricted(node.type));
 		if (hasRestrictedNode) return false;
 
 		const workflowData = deepCopy(getNodesToSave(nodes));
