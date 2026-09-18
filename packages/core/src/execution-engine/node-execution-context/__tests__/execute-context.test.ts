@@ -855,6 +855,16 @@ describe('ExecuteContext', () => {
 			});
 		});
 
+		it('handles null and undefined without throwing when no channel redacts', () => {
+			const context = makeContext('manual', runDataWith(false, false));
+			context.sendMessageToUI(null, undefined);
+
+			expect(additionalData.sendDataToUI).toHaveBeenCalledWith('sendConsoleMessage', {
+				source: `[Node: "${node.name}"]`,
+				messages: [null, undefined],
+			});
+		});
+
 		it('fails closed when resolving the policy throws', () => {
 			const throwingRunData = {
 				get executionData(): never {
